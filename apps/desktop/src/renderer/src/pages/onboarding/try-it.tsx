@@ -99,7 +99,7 @@ export default function TryItStep() {
       </div>
 
       {/* Right column — live chat */}
-      <div className="flex-1 flex flex-col min-h-0 bg-muted/30">
+      <div className="flex-1 flex flex-col min-h-0 border-l">
         {initError ? (
           <div className="flex-1 flex items-center justify-center text-sm text-destructive px-8 text-center">
             {initError}
