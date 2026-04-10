@@ -180,7 +180,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	}
 
 	// Use the JWT to create a PAT via the existing API.
-	client := cli.NewAPIClient(serverURL, "", jwtToken)
+	client := newSimpleAPIClient(cmd, serverURL, jwtToken)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -204,7 +204,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	}
 
 	// Verify the PAT works.
-	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
+	patClient := newSimpleAPIClient(cmd, serverURL, patResp.Token)
 	var me struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
@@ -244,7 +244,7 @@ func runAuthLoginToken(cmd *cobra.Command) error {
 	}
 
 	serverURL := resolveServerURL(cmd)
-	client := cli.NewAPIClient(serverURL, "", token)
+	client := newSimpleAPIClient(cmd, serverURL, token)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -279,7 +279,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	client := cli.NewAPIClient(serverURL, "", token)
+	client := newSimpleAPIClient(cmd, serverURL, token)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

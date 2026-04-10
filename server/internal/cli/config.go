@@ -16,6 +16,12 @@ type CLIConfig struct {
 	AppURL      string `json:"app_url,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Token       string `json:"token,omitempty"`
+	// CFAccessClientID and CFAccessClientSecret are Cloudflare Access service-token
+	// credentials. When set, they are injected into every outbound HTTP request via
+	// CFAccessTransport, allowing the CLI and daemon to reach CF-Access-protected
+	// server URLs without browser-based authentication.
+	CFAccessClientID     string `json:"cf_access_client_id,omitempty"`
+	CFAccessClientSecret string `json:"cf_access_client_secret,omitempty"`
 }
 
 // CLIConfigPath returns the default path for the CLI config file.

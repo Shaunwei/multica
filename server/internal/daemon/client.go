@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 // requestError is returned by postJSON/getJSON when the server responds with an error status.
@@ -45,9 +47,16 @@ type Client struct {
 
 // NewClient creates a new daemon API client.
 func NewClient(baseURL string) *Client {
+	return NewClientWithCF(baseURL, "", "")
+}
+
+// NewClientWithCF creates a daemon API client with optional Cloudflare Access
+// service-token credentials applied via cli.CFAccessTransport — the single
+// place where CF headers are injected across all daemon HTTP requests.
+func NewClientWithCF(baseURL, cfClientID, cfClientSecret string) *Client {
 	return &Client{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		client:  cli.NewHTTPClient(30*time.Second, cfClientID, cfClientSecret),
 	}
 }
 

@@ -16,8 +16,7 @@
   "packageManager": "pnpm@10.28.2",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "electron"
+      "esbuild"
     ],
     "overrides": {
       "@types/react": "catalog:",
@@ -29,7 +28,6 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
     "pg": "^8.20.0",
-    "turbo": "^2.5.4",
     "typescript": "catalog:"
   }
 }

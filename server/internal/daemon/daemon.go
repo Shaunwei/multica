@@ -170,6 +170,9 @@ func (d *Daemon) resolveAuth() error {
 		d.logger.Warn("not authenticated — run " + loginHint + " to authenticate, then restart the daemon")
 		return fmt.Errorf("not authenticated: run %s first", loginHint)
 	}
+	// Rebuild the client with CF Access credentials baked into the transport.
+	// This is the single place where CF credentials are applied for the daemon.
+	d.client = NewClientWithCF(d.cfg.ServerBaseURL, cfg.CFAccessClientID, cfg.CFAccessClientSecret)
 	d.client.SetToken(cfg.Token)
 	d.logger.Info("authenticated")
 	return nil

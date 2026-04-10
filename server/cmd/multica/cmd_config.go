@@ -24,7 +24,7 @@ var configShowCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a CLI configuration value",
-	Long:  "Supported keys: server_url, app_url, workspace_id",
+	Long:  "Supported keys: server_url, app_url, workspace_id, cf_access_client_id, cf_access_client_secret",
 	Args:  exactArgs(2),
 	RunE:  runConfigSet,
 }
@@ -46,9 +46,16 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if profile != "" {
 		fmt.Fprintf(os.Stdout, "Profile:      %s\n", profile)
 	}
-	fmt.Fprintf(os.Stdout, "server_url:   %s\n", valueOrDefault(cfg.ServerURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "app_url:      %s\n", valueOrDefault(cfg.AppURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "workspace_id: %s\n", valueOrDefault(cfg.WorkspaceID, "(not set)"))
+	fmt.Fprintf(os.Stdout, "server_url:              %s\n", valueOrDefault(cfg.ServerURL, "(not set)"))
+	fmt.Fprintf(os.Stdout, "app_url:                 %s\n", valueOrDefault(cfg.AppURL, "(not set)"))
+	fmt.Fprintf(os.Stdout, "workspace_id:            %s\n", valueOrDefault(cfg.WorkspaceID, "(not set)"))
+	if cfg.CFAccessClientID != "" {
+		fmt.Fprintf(os.Stdout, "cf_access_client_id:     %s\n", cfg.CFAccessClientID)
+		fmt.Fprintf(os.Stdout, "cf_access_client_secret: (set)\n")
+	} else {
+		fmt.Fprintf(os.Stdout, "cf_access_client_id:     (not set)\n")
+		fmt.Fprintf(os.Stdout, "cf_access_client_secret: (not set)\n")
+	}
 	return nil
 }
 
@@ -68,8 +75,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		cfg.AppURL = value
 	case "workspace_id":
 		cfg.WorkspaceID = value
+	case "cf_access_client_id":
+		cfg.CFAccessClientID = value
+	case "cf_access_client_secret":
+		cfg.CFAccessClientSecret = value
 	default:
-		return fmt.Errorf("unknown config key %q (supported: server_url, app_url, workspace_id)", key)
+		return fmt.Errorf("unknown config key %q (supported: server_url, app_url, workspace_id, cf_access_client_id, cf_access_client_secret)", key)
 	}
 
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {

@@ -47,6 +47,9 @@ interface LoginPageProps {
   /** Called after successful login. The workspace list is seeded into React
    *  Query before this fires, so the caller can compute a destination URL. */
   onSuccess: () => void;
+  /** Called when the user submits their email and the login flow begins.
+   *  Use this to suppress auto-redirects while login is in progress. */
+  onLoginStart?: () => void;
   /** Google OAuth config. Omit to disable Google login. */
   google?: GoogleAuthConfig;
   /** CLI callback config for authorizing CLI tools. */
@@ -94,6 +97,7 @@ export function validateCliCallback(cliCallback: string): boolean {
 export function LoginPage({
   logo,
   onSuccess,
+  onLoginStart,
   google,
   cliCallback,
   onTokenObtained,
@@ -165,6 +169,7 @@ export function LoginPage({
       setError("");
       try {
         await useAuthStore.getState().sendCode(email);
+        onLoginStart?.();
         setStep("code");
         setCode("");
         setCooldown(60);

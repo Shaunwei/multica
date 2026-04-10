@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
@@ -24,15 +24,20 @@ function LoginPageContent() {
   const platform = searchParams.get("platform");
   // `next` carries a protected URL the user was originally headed to
   // (e.g. /invite/{id}). With URL-driven workspaces there is no legacy
-  // "/issues" default — if `next` is absent we decide after login based on
+  // "/issues" default, if `next` is absent we decide after login based on
   // the user's workspace list.
   const nextUrl = searchParams.get("next");
 
-  // Already authenticated — honor ?next= or fall back to first workspace
-  // (or /workspaces/new if the user has none). Skip this entire path when
-  // the user arrived to authorize the CLI.
+  // Track whether the user is mid-login (entered email, waiting for code).
+  // Prevents the redirect useEffect from firing while login is in progress,
+  // which would interrupt the email to code flow.
+  const loginInProgress = useRef(false);
+
+  // Already authenticated, honor ?next= or fall back to first workspace
+  // (or /workspaces/new if the user has none). Skip this path when the
+  // user arrived to authorize the CLI or when login is mid-flight.
   useEffect(() => {
-    if (isLoading || !user || cliCallbackRaw) return;
+    if (isLoading || !user || cliCallbackRaw || loginInProgress.current) return;
     if (nextUrl) {
       router.replace(nextUrl);
       return;
@@ -45,6 +50,7 @@ function LoginPageContent() {
   }, [isLoading, user, router, nextUrl, cliCallbackRaw, qc]);
 
   const handleSuccess = () => {
+    loginInProgress.current = false;
     if (nextUrl) {
       router.push(nextUrl);
       return;
@@ -69,6 +75,9 @@ function LoginPageContent() {
 
   return (
     <LoginPage
+      onLoginStart={() => {
+        loginInProgress.current = true;
+      }}
       onSuccess={handleSuccess}
       google={
         googleClientId

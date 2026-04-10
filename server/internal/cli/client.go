@@ -27,11 +27,18 @@ type APIClient struct {
 
 // NewAPIClient creates a new API client for ctrl commands.
 func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
+	return NewAPIClientWithCF(baseURL, workspaceID, token, "", "")
+}
+
+// NewAPIClientWithCF creates a new API client with optional Cloudflare Access
+// service-token credentials. The credentials are applied to every request via
+// CFAccessTransport — the single place where CF headers are injected.
+func NewAPIClientWithCF(baseURL, workspaceID, token, cfClientID, cfClientSecret string) *APIClient {
 	return &APIClient{
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		WorkspaceID: workspaceID,
 		Token:       token,
-		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
+		HTTPClient:  NewHTTPClient(15*time.Second, cfClientID, cfClientSecret),
 	}
 }
 

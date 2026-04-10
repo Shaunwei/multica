@@ -163,7 +163,8 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 		return nil, fmt.Errorf("server URL not set: use --server-url flag, MULTICA_SERVER_URL env, or 'multica config set server_url <url>'")
 	}
 
-	client := cli.NewAPIClient(serverURL, workspaceID, token)
+	cfID, cfSecret := resolveCFAccessCredentials(cmd)
+	client := cli.NewAPIClientWithCF(serverURL, workspaceID, token, cfID, cfSecret)
 	// When running inside a daemon task, attribute actions to the agent.
 	if agentID := os.Getenv("MULTICA_AGENT_ID"); agentID != "" {
 		client.AgentID = agentID
@@ -172,6 +173,40 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 		client.TaskID = taskID
 	}
 	return client, nil
+}
+
+// resolveCFAccessCredentials returns Cloudflare Access service-token credentials.
+// Resolution order: env vars → CLI config file.
+func resolveCFAccessCredentials(cmd *cobra.Command) (clientID, clientSecret string) {
+	if v := strings.TrimSpace(os.Getenv("CF_ACCESS_CLIENT_ID")); v != "" {
+		clientID = v
+	}
+	if v := strings.TrimSpace(os.Getenv("CF_ACCESS_CLIENT_SECRET")); v != "" {
+		clientSecret = v
+	}
+	if clientID != "" && clientSecret != "" {
+		return
+	}
+	profile := resolveProfile(cmd)
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return
+	}
+	if clientID == "" {
+		clientID = cfg.CFAccessClientID
+	}
+	if clientSecret == "" {
+		clientSecret = cfg.CFAccessClientSecret
+	}
+	return
+}
+
+// newSimpleAPIClient is a convenience wrapper for auth/login commands that need
+// a client with a specific token (not resolved from config) but still want CF
+// Access credentials applied.
+func newSimpleAPIClient(cmd *cobra.Command, serverURL, token string) *cli.APIClient {
+	cfID, cfSecret := resolveCFAccessCredentials(cmd)
+	return cli.NewAPIClientWithCF(serverURL, "", token, cfID, cfSecret)
 }
 
 func resolveServerURL(cmd *cobra.Command) string {

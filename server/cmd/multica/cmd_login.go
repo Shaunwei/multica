@@ -63,7 +63,7 @@ func autoWatchWorkspaces(cmd *cobra.Command) error {
 		return fmt.Errorf("not authenticated")
 	}
 
-	client := cli.NewAPIClient(serverURL, "", token)
+	client := newSimpleAPIClient(cmd, serverURL, token)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

@@ -109,7 +109,7 @@ start:
 	@echo "Starting backend and frontend..."
 	@trap 'kill 0' EXIT; \
 		(cd server && go run ./cmd/server) & \
-		pnpm dev:web & \
+		pnpm start:web & \
 		wait
 
 # Stop all services
