@@ -28,7 +28,13 @@ export class WSClient {
   }
 
   connect() {
-    const url = new URL(this.baseUrl);
+    let url: URL;
+    try {
+      url = new URL(this.baseUrl);
+    } catch {
+      this.logger.error("invalid WebSocket URL — realtime disabled", { url: this.baseUrl });
+      return;
+    }
     // Token is never sent as a URL query parameter — it would be logged by
     // proxies, CDNs, and browser history.  In cookie mode the HttpOnly cookie
     // is sent automatically with the upgrade request.  In token mode the token
