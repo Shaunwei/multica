@@ -14,4 +14,6 @@ export interface CoreProviderProps {
   onLogin?: () => void;
   /** Called after logout (e.g. clear cookie). */
   onLogout?: () => void;
+  /** Extra headers forwarded on every API request (e.g. CF Access service token). */
+  extraHeaders?: Record<string, string>;
 }

@@ -24,11 +24,13 @@ function initCore(
   onLogin?: () => void,
   onLogout?: () => void,
   cookieAuth?: boolean,
+  extraHeaders?: Record<string, string>,
 ) {
   if (initialized) return;
 
   const api = new ApiClient(apiBaseUrl, {
     logger: createLogger("api"),
+    extraHeaders,
     onUnauthorized: () => {
       storage.removeItem("multica_token");
     },
@@ -62,11 +64,12 @@ export function CoreProvider({
   cookieAuth,
   onLogin,
   onLogout,
+  extraHeaders,
 }: CoreProviderProps) {
   // Initialize singletons on first render only. Dependencies are read-once:
   // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth), []);
+  useMemo(() => initCore(apiBaseUrl, storage, onLogin, onLogout, cookieAuth, extraHeaders), []);
 
   return (
     <QueryProvider>

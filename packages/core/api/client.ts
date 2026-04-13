@@ -71,6 +71,8 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 export interface ApiClientOptions {
   logger?: Logger;
   onUnauthorized?: () => void;
+  /** Extra headers to include on every request (e.g. CF-Access-Client-Id). */
+  extraHeaders?: Record<string, string>;
 }
 
 export interface LoginResponse {
@@ -125,6 +127,7 @@ export class ApiClient {
     if (slug) headers["X-Workspace-Slug"] = slug;
     const csrf = this.readCsrfToken();
     if (csrf) headers["X-CSRF-Token"] = csrf;
+    if (this.options.extraHeaders) Object.assign(headers, this.options.extraHeaders);
     return headers;
   }
 

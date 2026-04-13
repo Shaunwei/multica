@@ -7,6 +7,18 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 
+const cfAccessHeaders: Record<string, string> | undefined = (() => {
+  const id = process.env.NEXT_PUBLIC_CF_ACCESS_CLIENT_ID;
+  const secret = process.env.NEXT_PUBLIC_CF_ACCESS_CLIENT_SECRET;
+  if (id && secret) {
+    return {
+      "CF-Access-Client-Id": id,
+      "CF-Access-Client-Secret": secret,
+    };
+  }
+  return undefined;
+})();
+
 // Legacy token in localStorage → keep this session in token mode so users who
 // logged in before the cookie-auth migration stay authed. They migrate to
 // cookie mode on their next logout/login cycle (logout clears multica_token).
@@ -41,6 +53,7 @@ export function WebProviders({ children }: { children: React.ReactNode }) {
       cookieAuth={cookieAuth}
       onLogin={setLoggedInCookie}
       onLogout={clearLoggedInCookie}
+      extraHeaders={cfAccessHeaders}
     >
       <WebNavigationProvider>{children}</WebNavigationProvider>
     </CoreProvider>
