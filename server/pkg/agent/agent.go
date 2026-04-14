@@ -86,6 +86,12 @@ type Config struct {
 	ExecutablePath string            // path to CLI binary (claude, codex, copilot, opencode, openclaw, hermes, gemini, or pi)
 	Env            map[string]string // extra environment variables
 	Logger         *slog.Logger
+	// OpenClaw-specific: route through the OpenClaw Gateway instead of --local.
+	// When true, tasks run with full Gateway context (memory, workspace, tools).
+	// Requires an OpenClaw Gateway to be running and configured.
+	GatewayMode   bool
+	SessionPrefix string // prefix for per-task session IDs (default: "multica")
+	AgentName     string // OpenClaw agent name to target via --agent (gateway mode only)
 }
 
 // New creates a Backend for the given agent type.

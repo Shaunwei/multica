@@ -2,8 +2,11 @@ package daemon
 
 // AgentEntry describes a single available agent CLI.
 type AgentEntry struct {
-	Path  string // path to CLI binary
-	Model string // model override (optional)
+	Path          string // path to CLI binary
+	Model         string // model override (optional)
+	GatewayMode   bool   // if true, route through OpenClaw Gateway instead of --local
+	SessionPrefix string // session ID prefix for Gateway mode (default: "multica")
+	AgentName     string // OpenClaw agent name for --agent flag in gateway mode
 }
 
 // Runtime represents a registered daemon runtime.
