@@ -33,6 +33,9 @@ server/tmp/
 server/migrate
 server/daemon
 server/multica
+server/multica-server
+multica-server
+multica-cli
 
 # Test artifacts
 test-results/
