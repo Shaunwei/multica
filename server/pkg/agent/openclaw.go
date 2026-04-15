@@ -53,8 +53,9 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	if sessionID == "" {
 		if b.cfg.GatewayMode {
 			// Derive a stable per-task session ID from the task workdir so each
-			// Multica task gets its own isolated Gateway session. The workdir path
-			// is <workspacesRoot>/<task-id>/workdir — two levels up gives the task ID.
+			// Multica task gets its own isolated Gateway session.
+			// Expected path shape: <workspacesRoot>/<task-id>/workdir
+			// filepath.Dir gives <workspacesRoot>/<task-id>, Base gives the task ID.
 			prefix := b.cfg.SessionPrefix
 			if prefix == "" {
 				prefix = "multica"

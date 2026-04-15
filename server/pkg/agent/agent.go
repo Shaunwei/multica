@@ -93,6 +93,7 @@ type Config struct {
 	GatewayMode bool
 
 	// SessionPrefix is prepended to derived Gateway session IDs (default "multica").
+	// Only used when GatewayMode is true; local mode always uses "multica-" prefix.
 	SessionPrefix string
 }
 

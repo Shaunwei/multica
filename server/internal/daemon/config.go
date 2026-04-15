@@ -101,8 +101,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	openclawPath := envOrDefault("MULTICA_OPENCLAW_PATH", "openclaw")
 	if _, err := exec.LookPath(openclawPath); err == nil {
-		openclawGateway := strings.TrimSpace(os.Getenv("MULTICA_OPENCLAW_GATEWAY")) == "1" ||
-			strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_OPENCLAW_GATEWAY")), "true")
+		v := strings.TrimSpace(os.Getenv("MULTICA_OPENCLAW_GATEWAY"))
+		openclawGateway := v == "1" || strings.EqualFold(v, "true")
 		agents["openclaw"] = AgentEntry{
 			Path:          openclawPath,
 			Model:         strings.TrimSpace(os.Getenv("MULTICA_OPENCLAW_MODEL")),
