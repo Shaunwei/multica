@@ -18,7 +18,10 @@ func BuildPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
+	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n\n", task.IssueID)
+	b.WriteString("When you have finished the task, you MUST run:\n")
+	fmt.Fprintf(&b, "  multica issue status %s done\n\n", task.IssueID)
+	b.WriteString("Do not skip this step — the system depends on the issue being marked done to close the loop.\n")
 	return b.String()
 }
 
@@ -33,7 +36,10 @@ func buildCommentPrompt(task Task) string {
 		b.WriteString("[NEW COMMENT] A user just left a new comment that triggered this task. You MUST respond to THIS comment, not any previous ones:\n\n")
 		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
 	}
-	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
+	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n\n", task.IssueID)
+	b.WriteString("When you have finished the task, you MUST run:\n")
+	fmt.Fprintf(&b, "  multica issue status %s done\n\n", task.IssueID)
+	b.WriteString("Do not skip this step — the system depends on the issue being marked done to close the loop.\n")
 	return b.String()
 }
 
