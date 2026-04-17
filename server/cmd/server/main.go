@@ -18,6 +18,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	logger.Init()
 
@@ -87,7 +93,7 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		slog.Info("server starting", "port", port)
+		slog.Info("server starting", "port", port, "version", version, "commit", commit, "built", date)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
 			os.Exit(1)
