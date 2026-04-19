@@ -988,6 +988,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, taskLo
 	}
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
+		GatewayMode:   entry.GatewayMode,
+		SessionPrefix: entry.SessionPrefix,
+		AgentName:     entry.AgentName,
 		Env:            agentEnv,
 		Logger:         d.logger,
 	})
