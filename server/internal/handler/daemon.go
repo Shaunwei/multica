@@ -534,6 +534,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("failed to unmarshal agent custom_args", "agent_id", uuidToString(agent.ID), "error", err)
 			}
 		}
+		var mcpConfig json.RawMessage
+		if agent.McpConfig != nil {
+			mcpConfig = json.RawMessage(agent.McpConfig)
+		}
 		resp.Agent = &TaskAgentData{
 			ID:           uuidToString(agent.ID),
 			Name:         agent.Name,
@@ -541,6 +545,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			Skills:       skills,
 			CustomEnv:    customEnv,
 			CustomArgs:   customArgs,
+			McpConfig:    mcpConfig,
 		}
 	}
 
@@ -603,6 +608,21 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					if msgs[i].Role == "user" {
 						resp.ChatMessage = msgs[i].Content
 						break
+					}
+				}
+			}
+		}
+	}
+
+	// Autopilot run_only task: resolve workspace from autopilot_run → autopilot.
+	if task.AutopilotRunID.Valid && resp.WorkspaceID == "" {
+		if run, err := h.Queries.GetAutopilotRun(r.Context(), task.AutopilotRunID); err == nil {
+			if ap, err := h.Queries.GetAutopilot(r.Context(), run.AutopilotID); err == nil {
+				resp.WorkspaceID = uuidToString(ap.WorkspaceID)
+				if ws, err := h.Queries.GetWorkspace(r.Context(), ap.WorkspaceID); err == nil && ws.Repos != nil {
+					var repos []RepoData
+					if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
+						resp.Repos = repos
 					}
 				}
 			}

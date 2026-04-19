@@ -12,7 +12,7 @@ import (
 //
 // For Claude:   writes {workDir}/CLAUDE.md  (skills discovered natively from .claude/skills/)
 // For Codex:    writes {workDir}/AGENTS.md  (skills discovered natively via CODEX_HOME)
-// For Copilot:  writes {workDir}/AGENTS.md  (Copilot CLI natively reads AGENTS.md)
+// For Copilot:  writes {workDir}/AGENTS.md  (skills discovered natively from .github/skills/)
 // For OpenCode: writes {workDir}/AGENTS.md  (skills discovered natively from .config/opencode/skills/)
 // For OpenClaw: writes {workDir}/AGENTS.md  (skills discovered natively from .openclaw/skills/)
 // For Gemini:   writes {workDir}/GEMINI.md  (discovered natively by the Gemini CLI)
@@ -169,7 +169,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("When referencing issues or people in comments, use the mention format so they render as interactive links:\n\n")
 	b.WriteString("- **Issue**: `[MUL-123](mention://issue/<issue-id>)` — renders as a clickable link to the issue\n")
 	b.WriteString("- **Member**: `[@Name](mention://member/<user-id>)` — renders as a styled mention and sends a notification\n")
-	b.WriteString("- **Agent**: `[@Name](mention://agent/<agent-id>)` — renders as a styled mention\n\n")
+	b.WriteString("- **Agent**: `[@Name](mention://agent/<agent-id>)` — renders as a styled mention and re-triggers the agent\n\n")
+	b.WriteString("⚠️ Agent and member mentions are **actions**, not text references: agent mentions enqueue a new task for the agent, and member mentions send a notification. ")
+	b.WriteString("If you only want to refer to someone by name in prose (e.g. \"GPT-Boy is correct\"), write the plain name without the mention link.\n\n")
 	b.WriteString("Use `multica issue list --output json` to look up issue IDs, and `multica workspace members --output json` for member IDs.\n\n")
 
 	b.WriteString("## Attachments\n\n")
