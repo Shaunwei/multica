@@ -1,7 +1,8 @@
 # UPGRADE.md — Multica Worker Node Upgrade Guide
 
-This file is for **Claude Code running on a worker node** (MacBook Pro, MacBook Max).
-If you're on the MacBook Air (full stack host), use the Multica Upgrade skill instead.
+> **Scope:** Worker nodes (MacBook Pro, MacBook Max) — daemon only.
+> Full-stack host (MacBook Air) uses a different process; see the Multica Upgrade skill.
+> This file lives in the private fork and is intended for Claude Code on worker nodes.
 
 ---
 
@@ -37,10 +38,10 @@ The Air always upgrades first and pushes to the fork. Check what's available:
 cd ~/ai/multica
 git fetch fork
 git log HEAD..fork/deploy-v0.2.5 --oneline   # commits we don't have yet
-git show fork/deploy-v0.2.5 --no-patch --format="%H %s" | head -3
 ```
 
-The latest commit message on the fork will show the target version (e.g. `chore: bump web version to v0.2.13`).
+The latest commit message on the fork will show the target version (e.g. `chore: bump web version to 0.2.13`).
+Alternatively: `python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])"` reads the current fork version.
 
 ---
 
@@ -131,9 +132,8 @@ Report back with:
 
 ## Repo Layout (reference)
 
-- **Fork**: `github.com/Shaunwei/multica` — our private branch with patches
-- **Branch**: `deploy-v0.2.5` (name is historical, carries all versions)
-- **Remote name**: `fork` (check with `git remote -v`)
+- **Branch**: `deploy-v0.2.5` (name is historical, carries all patched versions)
+- **Remote name**: `fork` — run `git remote -v` to confirm the URL
 - **Monorepo root**: `~/ai/multica`
 - **CLI source**: `server/cmd/multica/`
 - **Daemon log**: `~/.multica/daemon-launchd.log`
