@@ -63,11 +63,13 @@
     "./logger": "./logger.ts",
     "./utils": "./utils.ts",
     "./constants/*": "./constants/*.ts",
-    "./platform": "./platform/index.ts"
+    "./platform": "./platform/index.ts",
+    "./analytics": "./analytics/index.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-query-devtools": "^5.96.2",
+    "posthog-js": "catalog:",
     "zustand": "catalog:"
   },
   "peerDependencies": {

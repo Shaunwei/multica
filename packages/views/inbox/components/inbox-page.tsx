@@ -212,8 +212,12 @@ export function InboxPage() {
   );
 
   const detailContent = selected?.issue_id ? (
+    // Key by issue_id (not inbox-item id): a new comment/reaction generates a
+    // new inbox notification for the same issue, and the dedup helper picks the
+    // newest one — keying on its id would remount IssueDetail on every event,
+    // wiping the comment composer draft and resetting scroll position.
     <IssueDetail
-      key={selected.id}
+      key={selected.issue_id}
       issueId={selected.issue_id}
       defaultSidebarOpen={false}
       layoutId="multica_inbox_issue_detail_layout"

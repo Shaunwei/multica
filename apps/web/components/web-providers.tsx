@@ -1,11 +1,13 @@
 "use client";
 
+import { Suspense } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import { WebNavigationProvider } from "@/platform/navigation";
 import {
   setLoggedInCookie,
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
+import { PageviewTracker } from "./pageview-tracker";
 
 const cfAccessHeaders: Record<string, string> | undefined = (() => {
   const id = process.env.NEXT_PUBLIC_CF_ACCESS_CLIENT_ID;
@@ -55,6 +57,11 @@ export function WebProviders({ children }: { children: React.ReactNode }) {
       onLogout={clearLoggedInCookie}
       extraHeaders={cfAccessHeaders}
     >
+      {/* Suspense boundary is required by Next.js for useSearchParams in
+          a client component mounted this high in the tree. */}
+      <Suspense fallback={null}>
+        <PageviewTracker />
+      </Suspense>
       <WebNavigationProvider>{children}</WebNavigationProvider>
     </CoreProvider>
   );

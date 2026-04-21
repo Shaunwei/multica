@@ -3,6 +3,8 @@ package daemon
 import (
 	"fmt"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
 // BuildPrompt constructs the task prompt for an agent CLI.
@@ -28,6 +30,9 @@ func BuildPrompt(task Task) string {
 // buildCommentPrompt constructs a prompt for comment-triggered tasks.
 // The triggering comment content is embedded directly so the agent cannot
 // miss it, even when stale output files exist in a reused workdir.
+// The reply instructions (including the current TriggerCommentID as --parent)
+// are re-emitted on every turn so resumed sessions cannot carry forward a
+// previous turn's --parent UUID.
 func buildCommentPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
@@ -37,9 +42,7 @@ func buildCommentPrompt(task Task) string {
 		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n\n", task.IssueID)
-	b.WriteString("When you have finished the task, you MUST run:\n")
-	fmt.Fprintf(&b, "  multica issue status %s done\n\n", task.IssueID)
-	b.WriteString("Do not skip this step — the system depends on the issue being marked done to close the loop.\n")
+	b.WriteString(execenv.BuildCommentReplyInstructions(task.IssueID, task.TriggerCommentID))
 	return b.String()
 }
 
