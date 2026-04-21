@@ -37,7 +37,7 @@ The Air always upgrades first and pushes to the fork. Check what's available:
 ```bash
 cd ~/ai/multica
 git fetch fork
-git log HEAD..fork/deploy-v0.2.5 --oneline   # commits we don't have yet
+git log HEAD..fork/deploy-private --oneline   # commits we don't have yet
 ```
 
 The latest commit message on the fork will show the target version (e.g. `chore: bump web version to 0.2.13`).
@@ -45,14 +45,34 @@ Alternatively: `python3 -c "import json; print(json.load(open('apps/web/package.
 
 ---
 
-## Step 2 — Pull from Fork
+## Step 2 — Sync to Fork Branch
+
+First check your current branch:
 
 ```bash
 cd ~/ai/multica
-git merge fork/deploy-v0.2.5
+git branch --show-current
+git remote -v | grep fork
 ```
 
-No conflicts expected — fork carries all our patches already applied. If there are conflicts, stop and report.
+**If you are already on `deploy-private`** (and no conflicts expected):
+```bash
+git merge fork/deploy-private
+```
+
+**If you are on a different branch** (e.g. `private`, `main`, or anything else) — do NOT merge.
+Instead, reset to the fork branch directly:
+```bash
+git checkout -B deploy-private fork/deploy-private
+```
+This replaces your local branch with the fork's `deploy-private` cleanly. No conflicts possible.
+The fork already carries all patches (CF Access, gateway mode, close-loop prompt, etc.).
+
+If `git remote -v` does not show a `fork` remote, add it first:
+```bash
+git remote add fork git@github.com:Shaunwei/multica.git
+git fetch fork
+```
 
 ---
 
@@ -132,7 +152,7 @@ Report back with:
 
 ## Repo Layout (reference)
 
-- **Branch**: `deploy-v0.2.5` (name is historical, carries all patched versions)
+- **Branch**: `deploy-private` (name is historical, carries all patched versions)
 - **Remote name**: `fork` — run `git remote -v` to confirm the URL
 - **Monorepo root**: `~/ai/multica`
 - **CLI source**: `server/cmd/multica/`
