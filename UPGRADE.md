@@ -19,14 +19,30 @@ That's it. No migrations (those run on Air). No server restart. No web build.
 
 ---
 
+## Prerequisite — Locate the Multica Checkout
+
+All multica clones live under `~/ai/`. The directory may be `~/ai/multica` or `~/ai/multica-private` depending on when it was set up. Set `MULTICA_REPO` once and reuse it throughout:
+
+```bash
+MULTICA_REPO=$(ls -d ~/ai/multica ~/ai/multica-private 2>/dev/null | head -1)
+[ -z "$MULTICA_REPO" ] && { echo "FATAL: no multica checkout under ~/ai/" >&2; exit 1; }
+echo "Using $MULTICA_REPO"
+```
+
+Every step below uses `cd "$MULTICA_REPO"`.
+
+---
+
 ## Step 0 — Confirm You're on a Worker Node
 
 ```bash
 hostname   # should contain MacBook-Pro or MacBook-Max, NOT MacBook-Air
-multica version  # current version before upgrade
+multica version || echo "(baseline unavailable — continue anyway)"
 ```
 
 If you're on Air by mistake, stop — use the Multica Upgrade skill instead.
+
+A failing baseline (`exit 137`, empty output) usually means a previously-poisoned binary and does NOT block the upgrade — Step 4's `rm`+`cp`+`codesign` will heal it.
 
 ---
 
@@ -35,7 +51,7 @@ If you're on Air by mistake, stop — use the Multica Upgrade skill instead.
 The Air always upgrades first and pushes to the fork. Check what's available:
 
 ```bash
-cd ~/ai/multica
+cd "$MULTICA_REPO"
 git fetch fork
 git log HEAD..fork/deploy-private --oneline   # commits we don't have yet
 ```
@@ -50,7 +66,7 @@ Alternatively: `python3 -c "import json; print(json.load(open('apps/web/package.
 First check your current branch:
 
 ```bash
-cd ~/ai/multica
+cd "$MULTICA_REPO"
 git branch --show-current
 git remote -v | grep fork
 ```
@@ -81,7 +97,7 @@ git fetch fork
 Detect target version from the latest tag or fork commit:
 
 ```bash
-cd ~/ai/multica
+cd "$MULTICA_REPO"
 # Get target version (from latest tag on fork, or from package.json)
 TARGET_VERSION=$(python3 -c "import json; print('v' + json.load(open('apps/web/package.json'))['version'])")
 echo "Building $TARGET_VERSION"
@@ -104,11 +120,21 @@ go build \
 
 **Critical:** Remove first, then copy. Overwriting in-place causes macOS to SIGKILL the new binary (exit 137).
 
+**Also critical: refresh every `multica` on PATH, not just `/opt/homebrew/bin/multica`.** Some hosts have a second copy (commonly `~/bin/multica`) earlier in PATH. If you only replace one, `multica version` resolves the stale shadow and verification lies.
+
 ```bash
-rm /opt/homebrew/bin/multica
-cp ~/ai/multica/server/bin/multica /opt/homebrew/bin/multica
-codesign --sign - --force /opt/homebrew/bin/multica
-multica version   # confirm correct version
+# Apply rm + cp + codesign to every multica binary earlier-or-equal in PATH,
+# so the first-resolved multica is always the new one.
+NEW_BIN="$MULTICA_REPO/server/bin/multica"
+for dest in $(which -a multica); do
+  rm "$dest"
+  cp "$NEW_BIN" "$dest"
+  codesign --sign - --force "$dest"
+done
+# Also ensure /opt/homebrew/bin/multica exists even if it wasn't on PATH before.
+[ -e /opt/homebrew/bin/multica ] || { cp "$NEW_BIN" /opt/homebrew/bin/multica && codesign --sign - --force /opt/homebrew/bin/multica; }
+
+multica version   # confirm correct version via PATH resolution
 ```
 
 ---
@@ -123,6 +149,14 @@ sleep 6
 grep "starting daemon" ~/.multica/daemon-launchd.log | tail -2
 # expect: version=TARGET_VERSION (NOT "dev")
 ```
+
+**Expect transient bind-error noise.** While the old daemon's socket releases, LaunchAgent's retry loop may log a few:
+
+```
+Error: another daemon is already running on 127.0.0.1:19514: listen tcp 127.0.0.1:19514: bind: address already in use
+```
+
+These clear within a few seconds and are benign. Only fail if no `starting daemon` line with `version=TARGET_VERSION` appears within ~10 seconds of the kill.
 
 ---
 
@@ -154,7 +188,7 @@ Report back with:
 
 - **Branch**: `deploy-private` (name is historical, carries all patched versions)
 - **Remote name**: `fork` — run `git remote -v` to confirm the URL
-- **Monorepo root**: `~/ai/multica`
+- **Monorepo root**: under `~/ai/` — typically `~/ai/multica` or `~/ai/multica-private` (use the Prerequisite step to detect)
 - **CLI source**: `server/cmd/multica/`
 - **Daemon log**: `~/.multica/daemon-launchd.log`
 - **LaunchAgent**: `com.multica.daemon`
@@ -167,3 +201,4 @@ Report back with:
 - Don't `git push origin main` — upstream is read-only
 - Don't overwrite the CLI binary in place — always `rm` first to clear macOS exec cache
 - Don't skip version stamp in `go build` — daemon log will show `dev` without `-ldflags`
+- Don't refresh only `/opt/homebrew/bin/multica` — if another `multica` is earlier on PATH, verification lies. Refresh every entry returned by `which -a multica`.
