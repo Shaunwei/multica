@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -72,19 +71,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		return err
 	}
 
-	headers := http.Header{}
-	if token := d.client.Token(); token != "" {
-		headers.Set("Authorization", "Bearer "+token)
-	}
-	if d.client.platform != "" {
-		headers.Set("X-Client-Platform", d.client.platform)
-	}
-	if d.client.version != "" {
-		headers.Set("X-Client-Version", d.client.version)
-	}
-	if d.client.os != "" {
-		headers.Set("X-Client-OS", d.client.os)
-	}
+	headers := d.client.websocketHeaders()
 
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)

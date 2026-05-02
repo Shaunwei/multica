@@ -42,9 +42,11 @@ func isWorkspaceNotFoundError(err error) bool {
 
 // Client handles HTTP communication with the Multica server daemon API.
 type Client struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL        string
+	token          string
+	client         *http.Client
+	cfClientID     string
+	cfClientSecret string
 
 	// Identity headers sent on every request as X-Client-*. Populated by
 	// SetIdentity(); empty values are simply omitted.
@@ -59,14 +61,16 @@ func NewClient(baseURL string) *Client {
 }
 
 // NewClientWithCF creates a daemon API client with optional Cloudflare Access
-// service-token credentials applied via cli.CFAccessTransport — the single
-// place where CF headers are injected across all daemon HTTP requests.
+// service-token credentials. HTTP requests get CF headers via cli.CFAccessTransport;
+// websocketHeaders uses the stored credentials for daemon WebSocket handshakes.
 func NewClientWithCF(baseURL, cfClientID, cfClientSecret string) *Client {
 	return &Client{
-		baseURL:  baseURL,
-		client:   cli.NewHTTPClient(30*time.Second, cfClientID, cfClientSecret),
-		platform: "daemon",
-		os:       normalizeGOOS(runtime.GOOS),
+		baseURL:        baseURL,
+		client:         cli.NewHTTPClient(30*time.Second, cfClientID, cfClientSecret),
+		cfClientID:     cfClientID,
+		cfClientSecret: cfClientSecret,
+		platform:       "daemon",
+		os:             normalizeGOOS(runtime.GOOS),
 	}
 }
 
@@ -93,15 +97,38 @@ func (c *Client) SetVersion(v string) {
 
 // setIdentityHeaders attaches X-Client-Platform/Version/OS to req when set.
 func (c *Client) setIdentityHeaders(req *http.Request) {
+	c.setIdentityHeaderValues(req.Header)
+}
+
+func (c *Client) setIdentityHeaderValues(headers http.Header) {
 	if c.platform != "" {
-		req.Header.Set("X-Client-Platform", c.platform)
+		headers.Set("X-Client-Platform", c.platform)
 	}
 	if c.version != "" {
-		req.Header.Set("X-Client-Version", c.version)
+		headers.Set("X-Client-Version", c.version)
 	}
 	if c.os != "" {
-		req.Header.Set("X-Client-OS", c.os)
+		headers.Set("X-Client-OS", c.os)
 	}
+}
+
+func (c *Client) setCFAccessHeaders(headers http.Header) {
+	if c.cfClientID != "" {
+		headers.Set("CF-Access-Client-Id", c.cfClientID)
+	}
+	if c.cfClientSecret != "" {
+		headers.Set("CF-Access-Client-Secret", c.cfClientSecret)
+	}
+}
+
+func (c *Client) websocketHeaders() http.Header {
+	headers := http.Header{}
+	if c.token != "" {
+		headers.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaderValues(headers)
+	c.setCFAccessHeaders(headers)
+	return headers
 }
 
 // SetToken sets the auth token for authenticated requests.
