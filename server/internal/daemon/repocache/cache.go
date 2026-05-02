@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,21 +20,45 @@ import (
 // It passes the full daemon environment so credential helpers (e.g. gh) can
 // locate their config, and disables TTY prompting so auth failures produce
 // clear errors instead of blocking on a non-existent terminal.
+//
+// safe.directory=* is set via GIT_CONFIG_* env vars so git trusts all
+// directories regardless of ownership. The daemon manages its own bare
+// caches and worktrees, so the ownership check adds no security value
+// and breaks CI environments where the runner UID differs from the
+// directory owner.
 func gitEnv() []string {
-	return append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	base := os.Environ()
+
+	// Find the existing GIT_CONFIG_COUNT so we append at the next index
+	// rather than overwriting any env-scoped git config (auth, URL
+	// rewrites, extra headers, etc.).
+	existing := 0
+	for _, e := range base {
+		if strings.HasPrefix(e, "GIT_CONFIG_COUNT=") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(e, "GIT_CONFIG_COUNT=")); err == nil {
+				existing = n
+			}
+		}
+	}
+
+	idx := strconv.Itoa(existing)
+	return append(base,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_COUNT="+strconv.Itoa(existing+1),
+		"GIT_CONFIG_KEY_"+idx+"=safe.directory",
+		"GIT_CONFIG_VALUE_"+idx+"=*",
+	)
 }
 
 // RepoInfo describes a repository to cache.
 type RepoInfo struct {
-	URL         string
-	Description string
+	URL string
 }
 
 // CachedRepo describes a cached bare clone ready for worktree creation.
 type CachedRepo struct {
-	URL         string // remote URL
-	Description string // human-readable description
-	LocalPath   string // absolute path to the bare clone
+	URL       string // remote URL
+	LocalPath string // absolute path to the bare clone
 }
 
 // Cache manages bare git clones for workspace repositories.
@@ -327,11 +352,12 @@ func setFetchRefspec(barePath, refspec string) error {
 
 // WorktreeParams holds inputs for creating a worktree from a cached bare clone.
 type WorktreeParams struct {
-	WorkspaceID string // workspace that owns the repo
-	RepoURL     string // remote URL to look up in the cache
-	WorkDir     string // parent directory for the worktree (e.g. task workdir)
-	AgentName   string // for branch naming
-	TaskID      string // for branch naming uniqueness
+	WorkspaceID        string // workspace that owns the repo
+	RepoURL            string // remote URL to look up in the cache
+	WorkDir            string // parent directory for the worktree (e.g. task workdir)
+	AgentName          string // for branch naming
+	TaskID             string // for branch naming uniqueness
+	CoAuthoredByEnabled bool  // install prepare-commit-msg hook for Co-authored-by trailer
 }
 
 // WorktreeResult describes a successfully created worktree.
@@ -401,6 +427,13 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 			_ = excludeFromGit(worktreePath, pattern)
 		}
 
+		// Install Co-authored-by hook for Multica Agent attribution (if enabled).
+		if params.CoAuthoredByEnabled {
+			if err := installCoAuthoredByHook(worktreePath); err != nil {
+				c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
+			}
+		}
+
 		c.logger.Info("repo checkout: existing worktree updated",
 			"url", params.RepoURL,
 			"path", worktreePath,
@@ -424,6 +457,13 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	// Exclude agent context files from git tracking.
 	for _, pattern := range []string{".agent_context", "CLAUDE.md", "AGENTS.md", ".claude", ".config/opencode"} {
 		_ = excludeFromGit(worktreePath, pattern)
+	}
+
+	// Install Co-authored-by hook for Multica Agent attribution (if enabled).
+	if params.CoAuthoredByEnabled {
+		if err := installCoAuthoredByHook(worktreePath); err != nil {
+			c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
+		}
 	}
 
 	c.logger.Info("repo checkout: worktree created",
@@ -648,6 +688,58 @@ func bareHeadBranch(barePath string) string {
 		return ""
 	}
 	return ref
+}
+
+// prepareCommitMsgHook is the prepare-commit-msg hook script that appends a
+// Co-authored-by trailer for the Multica Agent to every commit message.
+const prepareCommitMsgHook = `#!/bin/sh
+# Multica: add Co-authored-by trailer for the Multica Agent.
+# Installed by the Multica daemon. Do not edit — it will be overwritten.
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+
+# Skip merge and squash commits.
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+TRAILER="Co-authored-by: multica-agent <github@multica.ai>"
+
+# Don't add if already present.
+if grep -qF "$TRAILER" "$COMMIT_MSG_FILE"; then
+  exit 0
+fi
+
+# Use git interpret-trailers for proper formatting.
+git interpret-trailers --in-place --trailer "$TRAILER" "$COMMIT_MSG_FILE"
+`
+
+// installCoAuthoredByHook installs a prepare-commit-msg git hook that appends
+// a Co-authored-by trailer for the Multica Agent. The hook is installed in the
+// git common directory (the bare repo for worktrees) so it applies to all
+// worktrees created from this cache.
+func installCoAuthoredByHook(worktreePath string) error {
+	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("resolve git common dir: %w", err)
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(worktreePath, commonDir)
+	}
+
+	hooksDir := filepath.Join(commonDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		return fmt.Errorf("create hooks dir: %w", err)
+	}
+
+	hookPath := filepath.Join(hooksDir, "prepare-commit-msg")
+	if err := os.WriteFile(hookPath, []byte(prepareCommitMsgHook), 0o755); err != nil {
+		return fmt.Errorf("write prepare-commit-msg hook: %w", err)
+	}
+	return nil
 }
 
 // excludeFromGit adds a pattern to the worktree's .git/info/exclude file.

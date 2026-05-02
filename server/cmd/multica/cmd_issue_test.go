@@ -5,11 +5,98 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/multica-ai/multica/server/internal/cli"
 )
+
+// pipeStdin replaces os.Stdin with a pipe seeded by the given body for the
+// duration of fn, so resolveTextFlag's --content-stdin / --description-stdin
+// branch can be exercised in unit tests without spawning a subprocess.
+func pipeStdin(t *testing.T, body string, fn func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString(body); err != nil {
+		t.Fatalf("write pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() {
+		os.Stdin = orig
+		_ = r.Close()
+	}()
+	fn()
+}
+
+// newFlagTestCmd builds a throwaway cobra.Command carrying the inline +
+// stdin flag pair that resolveTextFlag expects.
+func newFlagTestCmd(name string) *cobra.Command {
+	c := &cobra.Command{Use: "test"}
+	c.Flags().String(name, "", "")
+	c.Flags().Bool(name+"-stdin", false, "")
+	return c
+}
+
+func TestResolveTextFlag(t *testing.T) {
+	t.Run("inline value is unescaped", func(t *testing.T) {
+		c := newFlagTestCmd("description")
+		_ = c.Flags().Set("description", `para1\n\npara2`)
+		got, ok, err := resolveTextFlag(c, "description")
+		if err != nil || !ok {
+			t.Fatalf("unexpected: ok=%v err=%v", ok, err)
+		}
+		if got != "para1\n\npara2" {
+			t.Errorf("got %q, want decoded paragraphs", got)
+		}
+	})
+
+	t.Run("stdin body is preserved verbatim", func(t *testing.T) {
+		c := newFlagTestCmd("description")
+		_ = c.Flags().Set("description-stdin", "true")
+		body := "first line\nsecond line with a literal \\n in it\n"
+		pipeStdin(t, body, func() {
+			got, ok, err := resolveTextFlag(c, "description")
+			if err != nil || !ok {
+				t.Fatalf("unexpected: ok=%v err=%v", ok, err)
+			}
+			// strings.TrimSuffix one trailing newline like content-stdin.
+			want := "first line\nsecond line with a literal \\n in it"
+			if got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	})
+
+	t.Run("inline + stdin is rejected", func(t *testing.T) {
+		c := newFlagTestCmd("description")
+		_ = c.Flags().Set("description", "inline")
+		_ = c.Flags().Set("description-stdin", "true")
+		if _, _, err := resolveTextFlag(c, "description"); err == nil {
+			t.Fatalf("expected mutually-exclusive error")
+		}
+	})
+
+	t.Run("missing both returns hasValue=false", func(t *testing.T) {
+		c := newFlagTestCmd("description")
+		got, ok, err := resolveTextFlag(c, "description")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if ok || got != "" {
+			t.Errorf("expected absent flag to yield (\"\", false), got (%q, %v)", got, ok)
+		}
+	})
+}
 
 func TestTruncateID(t *testing.T) {
 	tests := []struct {

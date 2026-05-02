@@ -284,6 +284,97 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.2.21",
+        date: "2026-04-30",
+        title: "Quick Capture 全面升级、Mermaid 图表与 Typed Project Resources",
+        changes: [],
+        features: [
+          "Quick Capture 取代旧的 New Issue 弹窗 —— 支持连续创建、文件上传，并能根据粘贴的 URL 自动丰富标题与描述",
+          "Markdown 内联渲染 Mermaid 图表，复杂图支持全屏 lightbox",
+          "Project 支持单独绑定 repo，无需依赖 workspace 默认配置",
+          "Agent / 评论 / Runtime / Skill 全面接入权限感知 UI，没有权限的操作不再展示",
+        ],
+        improvements: [
+          "Daemon `/tasks/claim` 轮询走 Redis 空认领 fast-path，空闲态 DB 压力下降，长期 open 的 Issue 自动回收磁盘",
+          "Multica Agent 的 Git 提交自动追加 `Co-authored-by` trailer，归属更清晰",
+          "Desktop 拦截 Cmd+R / Ctrl+R / F5 防止意外刷新，开发模式与 Updates 设置中均展示真实版本号",
+        ],
+        fixes: [
+          "Quick Create 不再凭空脑补需求，并自动把发起人订阅到 Issue",
+          "Inbox 点击通知后立即跳到目标评论；从 Issue 详情页 Mark as Done 时自动归档",
+          "Task rerun 启动全新 session，跳过被污染的 resume 状态",
+          "受邀成员登录后路由到所在 workspace，不再强制带去 `/onboarding`",
+        ],
+      },
+      {
+        version: "0.2.20",
+        date: "2026-04-29",
+        title: "Create Issue by Agent、Agent Presence v3 与 Daemon WebSocket 心跳",
+        changes: [],
+        features: [
+          "Create Issue by Agent —— 按 `c` 输入一句话并选 Agent，Issue 异步创建，结果回执送达 Inbox",
+          "Agent Presence v3 —— 可用性与最近任务拆成两条更清晰的信号；Issue 详情右侧新增 Execution Log，可看到当前 active run 与历史 run",
+          "Daemon ↔ Server 心跳改走 WebSocket，HTTP 自动 fallback，任务起跑延迟更低",
+          "Mention 选择器按本机最近使用排序",
+        ],
+        improvements: [
+          "Server 用 Redis 缓存 PAT / Daemon Token 校验，大型团队不再让 DB 抗下每次请求",
+          "后端支持通过 `MULTICA_CLAUDE_ARGS` / `MULTICA_CODEX_ARGS` 配置 Agent CLI 默认参数",
+          "Manual 与 Agent 创建 Issue 共享同一个 Dialog 外壳，picker Agent 会被默认设为 assignee",
+        ],
+        fixes: [
+          "Create Issue by Agent 不再卡住 queued 任务，也不再因附件上传失败而重复创建 Issue",
+          "Agent 评论保留换行，不再渲染成字面量 `\\n`，多行回复的格式也被完整保留",
+          "Agent 自身发出的根评论不再继承父评论的 @mention，避免互相唤起的死循环",
+          "Windows 下 Cursor Agent 启动时保留多行 prompt",
+        ],
+      },
+      {
+        version: "0.2.19",
+        date: "2026-04-28",
+        title: "Kiro CLI Runtime、桌面通知红点与 Issue 标签过滤",
+        changes: [],
+        features: [
+          "新增 Kiro CLI 作为本地 Agent runtime 选项",
+          "macOS Dock 显示未读 Issue 红点；窗口失焦时弹出原生通知，点击直达对应 Issue",
+          "Issue 列表新增 Label 过滤，可与状态、优先级、Assignee 等组合使用",
+          "Daemon 通过 WebSocket 接收任务唤醒，任务起跑延迟显著降低",
+        ],
+        improvements: [
+          "List/Board 视图的状态分组 header 更简洁，颜色提示更清晰",
+          "评论中作者手写的 Markdown 链接不再被自动 linkify 替换",
+          "添加 Label 现在乐观更新，无需等待服务端往返",
+          "Mention 输入时的 Issue 搜索结果会随着输入实时刷新",
+        ],
+        fixes: [
+          "Comment 被删除时会取消已触发的 Agent 任务，不再有幽灵 run",
+          "Codex 卡住的对话回合会超时退出，避免占用配额",
+          "Windows Daemon 不再随父 shell 关闭被一同杀掉",
+          "Agent 之间的 mention 不再相互触发，避免死循环",
+        ],
+      },
+      {
+        version: "0.2.18",
+        date: "2026-04-27",
+        title: "Issue 标签、Labs 设置页与邀请红点",
+        changes: [],
+        features: [
+          "Issue 标签——给 Issue 上色、分类，列表、看板和详情页都能用",
+          "新增 Labs 设置页，集中放实验性开关",
+          "有未读工作区邀请时，侧边栏会出现红点提示",
+        ],
+        improvements: [
+          "Project 选择器会显示当前所选 Project 的图标",
+          "进入详情页时，侧边栏父级菜单保持高亮",
+          "自托管部署正确读取注册放行相关的环境变量",
+        ],
+        fixes: [
+          "Agent 评论的换行恢复正常显示",
+          "桌面端 RPM 不再与 Slack / VS Code 在 Fedora 上冲突",
+          "Windows 下 Agent 能正确处理多行 prompt",
+        ],
+      },
+      {
         version: "0.2.17",
         date: "2026-04-26",
         title: "Agent 自定义环境变量、更清晰的失败信息与一系列稳定性修复",
