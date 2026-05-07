@@ -26,6 +26,7 @@ import type {
   MemberWithUser,
   User,
   Skill,
+  SkillSummary,
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
@@ -42,7 +43,8 @@ import type {
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
   RuntimeLocalSkillImportRequest,
-  TimelineEntry,
+  TimelinePage,
+  TimelinePageParam,
   AssigneeFrequencyEntry,
   TaskMessagePayload,
   Attachment,
@@ -85,6 +87,16 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
+import { parseWithFallback } from "./schema";
+import {
+  ChildIssuesResponseSchema,
+  CommentsListSchema,
+  EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_TIMELINE_PAGE,
+  ListIssuesResponseSchema,
+  SubscribersListSchema,
+  TimelinePageSchema,
+} from "./schemas";
 
 /** Identifies the calling client to the server.
  *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
@@ -399,7 +411,11 @@ export class ApiClient {
     if (params?.creator_id) search.set("creator_id", params.creator_id);
     if (params?.project_id) search.set("project_id", params.project_id);
     if (params?.open_only) search.set("open_only", "true");
-    return this.fetch(`/api/issues?${search}`);
+    const path = `/api/issues?${search}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(raw, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, {
+      endpoint: "GET /api/issues",
+    });
   }
 
   async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
@@ -455,7 +471,10 @@ export class ApiClient {
   }
 
   async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
-    return this.fetch(`/api/issues/${id}/children`);
+    const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
+    return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
+      endpoint: "GET /api/issues/:id/children",
+    });
   }
 
   async getChildIssueProgress(): Promise<{ progress: { parent_issue_id: string; total: number; done: number }[] }> {
@@ -482,7 +501,10 @@ export class ApiClient {
 
   // Comments
   async listComments(issueId: string): Promise<Comment[]> {
-    return this.fetch(`/api/issues/${issueId}/comments`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`);
+    return parseWithFallback(raw, CommentsListSchema, [], {
+      endpoint: "GET /api/issues/:id/comments",
+    });
   }
 
   async createComment(issueId: string, content: string, type?: string, parentId?: string, attachmentIds?: string[]): Promise<Comment> {
@@ -497,8 +519,22 @@ export class ApiClient {
     });
   }
 
-  async listTimeline(issueId: string): Promise<TimelineEntry[]> {
-    return this.fetch(`/api/issues/${issueId}/timeline`);
+  async listTimeline(
+    issueId: string,
+    pageParam: TimelinePageParam = { mode: "latest" },
+    limit = 50,
+  ): Promise<TimelinePage> {
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    if (pageParam.mode === "before") params.set("before", pageParam.cursor);
+    else if (pageParam.mode === "after") params.set("after", pageParam.cursor);
+    else if (pageParam.mode === "around") params.set("around", pageParam.id);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${issueId}/timeline?${params.toString()}`,
+    );
+    return parseWithFallback(raw, TimelinePageSchema, EMPTY_TIMELINE_PAGE, {
+      endpoint: "GET /api/issues/:id/timeline",
+    });
   }
 
   async getAssigneeFrequency(): Promise<AssigneeFrequencyEntry[]> {
@@ -546,7 +582,10 @@ export class ApiClient {
 
   // Subscribers
   async listIssueSubscribers(issueId: string): Promise<IssueSubscriber[]> {
-    return this.fetch(`/api/issues/${issueId}/subscribers`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/subscribers`);
+    return parseWithFallback(raw, SubscribersListSchema, [], {
+      endpoint: "GET /api/issues/:id/subscribers",
+    });
   }
 
   async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
@@ -906,7 +945,7 @@ export class ApiClient {
   }
 
   // Skills
-  async listSkills(): Promise<Skill[]> {
+  async listSkills(): Promise<SkillSummary[]> {
     return this.fetch("/api/skills");
   }
 
@@ -939,7 +978,7 @@ export class ApiClient {
     });
   }
 
-  async listAgentSkills(agentId: string): Promise<Skill[]> {
+  async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
     return this.fetch(`/api/agents/${agentId}/skills`);
   }
 
@@ -1012,7 +1051,7 @@ export class ApiClient {
     });
   }
 
-  async archiveChatSession(id: string): Promise<void> {
+  async deleteChatSession(id: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 

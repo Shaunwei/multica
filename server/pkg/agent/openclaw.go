@@ -9,9 +9,24 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// minOpenclawVersion is the lowest openclaw version that emits its
+// --json result on stdout. PR #2101 swapped the adapter from reading
+// stderr to stdout; older builds wrote JSON to stderr and now appear
+// to silently produce no output. The check in Execute fails fast with
+// a hardcoded upgrade hint so users see an actionable message instead
+// of "openclaw returned no parseable output".
+const minOpenclawVersion = "2026.5.5"
+
+// openclawVersionPattern extracts a three-segment dotted version from
+// arbitrary `openclaw --version` output (e.g. "openclaw 2026.5.5",
+// "openclaw v2026.5.5 c37871e").
+var openclawVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 
 // openclawBlockedArgs are flags hardcoded by the daemon that must not be
 // overridden by user-configured custom_args.
@@ -49,6 +64,10 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 	if _, err := exec.LookPath(execPath); err != nil {
 		return nil, fmt.Errorf("openclaw executable not found at %q: %w", execPath, err)
+	}
+
+	if err := checkOpenclawVersion(ctx, execPath); err != nil {
+		return nil, err
 	}
 
 	timeout := opts.Timeout
@@ -89,27 +108,16 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 	cmd.Env = buildEnv(b.cfg.Env)
 
-	// Pipe direction differs by mode:
-	//   --local:  JSON result → stderr, stdout is empty (or informational)
-	//   gateway:  JSON result → stdout, stderr has config/plugin warnings
-	var jsonPipe io.ReadCloser
-	if b.cfg.GatewayMode {
-		stdoutPipe, err := cmd.StdoutPipe()
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("openclaw stdout pipe: %w", err)
-		}
-		cmd.Stderr = newLogWriter(b.cfg.Logger, "[openclaw:stderr] ")
-		jsonPipe = stdoutPipe
-	} else {
-		stderrPipe, err := cmd.StderrPipe()
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("openclaw stderr pipe: %w", err)
-		}
-		cmd.Stdout = newLogWriter(b.cfg.Logger, "[openclaw:stdout] ")
-		jsonPipe = stderrPipe
+	// openclaw writes its --json output to stdout. Stderr carries log
+	// overflow (security warnings, tool errors, etc.) — capture it via a
+	// log writer so it surfaces in daemon logs without being fed into the
+	// JSON parser.
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("openclaw stdout pipe: %w", err)
 	}
+	cmd.Stderr = newLogWriter(b.cfg.Logger, "[openclaw:stderr] ")
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -121,10 +129,10 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 
-	// Close pipe when the context is cancelled so the scanner unblocks.
+	// Close stdout when the context is cancelled so the scanner unblocks.
 	go func() {
 		<-runCtx.Done()
-		_ = jsonPipe.Close()
+		_ = stdout.Close()
 	}()
 
 	go func() {
@@ -133,7 +141,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		defer close(resCh)
 
 		startTime := time.Now()
-		scanResult := b.processOutput(jsonPipe, msgCh)
+		scanResult := b.processOutput(stdout, msgCh)
 
 		// Wait for process exit.
 		exitErr := cmd.Wait()
@@ -244,6 +252,59 @@ func customArgsContains(args []string, flag string) bool {
 	return false
 }
 
+// checkOpenclawVersion runs `<execPath> --version` and returns a
+// user-facing error when the installed openclaw is older than
+// minOpenclawVersion. The returned error becomes the task's failure
+// comment, so the message intentionally names the detected version
+// and the upgrade command.
+func checkOpenclawVersion(ctx context.Context, execPath string) error {
+	cmd := exec.CommandContext(ctx, execPath, "--version")
+	hideAgentWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("openclaw --version failed: %w", err)
+	}
+	detected, ok := parseOpenclawVersion(string(out))
+	if !ok {
+		return fmt.Errorf("could not parse openclaw version from output: %q", strings.TrimSpace(string(out)))
+	}
+	if compareOpenclawVersion(detected, minOpenclawVersion) < 0 {
+		return fmt.Errorf("openclaw %s is below the minimum supported version %s. Run `openclaw update` to upgrade and try again.", detected, minOpenclawVersion)
+	}
+	return nil
+}
+
+// parseOpenclawVersion extracts the first three-segment dotted version
+// from arbitrary `openclaw --version` output. Returns ok=false when no
+// match is found.
+func parseOpenclawVersion(raw string) (string, bool) {
+	m := openclawVersionPattern.FindString(raw)
+	if m == "" {
+		return "", false
+	}
+	return m, true
+}
+
+// compareOpenclawVersion compares two three-segment dotted versions
+// numerically. Returns -1, 0, or +1 like bytes.Compare. Inputs must be
+// well-formed (matched by openclawVersionPattern); malformed segments
+// compare as zero.
+func compareOpenclawVersion(a, b string) int {
+	aParts := strings.SplitN(a, ".", 3)
+	bParts := strings.SplitN(b, ".", 3)
+	for i := 0; i < 3; i++ {
+		ai, _ := strconv.Atoi(aParts[i])
+		bi, _ := strconv.Atoi(bParts[i])
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+	}
+	return 0
+}
+
 // ── Event handlers ──
 
 // openclawEventResult holds accumulated state from processing the event stream.
@@ -261,11 +322,11 @@ type openclawEventResult struct {
 	model string
 }
 
-// processOutput reads the JSON output from the openclaw subprocess.
-// Handles both streaming NDJSON events and the legacy single-blob format.
-//
-//   - Local mode: JSON comes on stderr (mix of log lines + NDJSON events or final blob).
-//   - Gateway mode: JSON comes on stdout as streaming NDJSON events or a final blob.
+// processOutput reads the JSON output from openclaw --json stdout and returns
+// the parsed result. OpenClaw writes its JSON output to stdout; stderr carries
+// log overflow and is captured separately by the caller. The stream may
+// contain NDJSON streaming events or a final result JSON. Gateway mode may
+// wrap the final result as {runId,status,result}.
 func (b *openclawBackend) processOutput(r io.Reader, ch chan<- Message) openclawEventResult {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
@@ -363,12 +424,12 @@ func (b *openclawBackend) processOutput(r io.Reader, ch chan<- Message) openclaw
 		}
 
 		// Not JSON — treat as log line.
-		b.cfg.Logger.Debug("[openclaw:output] " + line)
+		b.cfg.Logger.Debug("[openclaw:stdout] " + line)
 		rawLines = append(rawLines, line)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return openclawEventResult{status: "failed", errMsg: fmt.Sprintf("read stderr: %v", err)}
+		return openclawEventResult{status: "failed", errMsg: fmt.Sprintf("read stdout: %v", err)}
 	}
 
 	// If we got no events at all, fall back to raw output.

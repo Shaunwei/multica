@@ -2,9 +2,14 @@
 
 import { useMemo } from "react";
 import { ApiClient } from "../api/client";
-import { setApiInstance } from "../api";
+import { setApiInstance, setSchemaLogger } from "../api";
 import { createAuthStore, registerAuthStore } from "../auth";
 import { createChatStore, registerChatStore } from "../chat";
+import {
+  I18nProvider,
+  LocaleAdapterProvider,
+  UserLocaleSync,
+} from "../i18n/react";
 import { WSProvider } from "../realtime";
 import { QueryProvider } from "../provider";
 import { createLogger } from "../logger";
@@ -38,6 +43,7 @@ function initCore(
     identity,
   });
   setApiInstance(api);
+  setSchemaLogger(createLogger("api-schema"));
 
   // In token mode, hydrate token from storage.
   if (!cookieAuth) {
@@ -68,6 +74,9 @@ export function CoreProvider({
   onLogout,
   extraHeaders,
   identity,
+  locale,
+  resources,
+  localeAdapter,
 }: CoreProviderProps) {
   // Initialize singletons on first render only. Dependencies are read-once:
   // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
@@ -77,7 +86,10 @@ export function CoreProvider({
     [],
   );
 
-  return (
+  // I18nProvider wraps everything else: server and client must use the same
+  // (locale, resources) to avoid hydration mismatch. Language switching goes
+  // through window.location.reload(), never client-side changeLanguage.
+  const tree = (
     <QueryProvider>
       <AuthInitializer
         onLogin={onLogin}
@@ -97,5 +109,22 @@ export function CoreProvider({
         </WSProvider>
       </AuthInitializer>
     </QueryProvider>
+  );
+
+  // UserLocaleSync requires a LocaleAdapter to persist; only mount it when
+  // the host app provides one (web layout + desktop App both do).
+  const withAdapter = localeAdapter ? (
+    <LocaleAdapterProvider adapter={localeAdapter}>
+      <UserLocaleSync />
+      {tree}
+    </LocaleAdapterProvider>
+  ) : (
+    tree
+  );
+
+  return (
+    <I18nProvider locale={locale} resources={resources}>
+      {withAdapter}
+    </I18nProvider>
   );
 }
