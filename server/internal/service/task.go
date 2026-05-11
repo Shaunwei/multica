@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/commenttrigger"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/mention"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -44,6 +45,12 @@ type TaskWakeupNotifier interface {
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
 const triggerSummaryMaxLen = 200
+
+const (
+	cancelReasonIssueAlreadyDone      = "issue_already_done"
+	cancelReasonTriggerNotActionable  = "trigger_not_actionable"
+	cancelReasonTriggerCreatedPreDone = "trigger_created_before_done"
+)
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
 // `…` when truncated. Operates on runes (not bytes) so multibyte characters
@@ -401,6 +408,42 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 	return &task, nil
 }
 
+func (s *TaskService) cancelTaskWithReason(ctx context.Context, taskID pgtype.UUID, reason string) (*db.AgentTaskQueue, error) {
+	task, err := s.Queries.CancelAgentTaskWithReason(ctx, db.CancelAgentTaskWithReasonParams{
+		ID:            taskID,
+		Error:         pgtype.Text{String: reason, Valid: true},
+		FailureReason: pgtype.Text{String: reason, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cancel task with reason: %w", err)
+	}
+	return &task, nil
+}
+
+func (s *TaskService) closedIssueTriggerCancelReason(ctx context.Context, task db.AgentTaskQueue) (string, bool) {
+	if !task.IssueID.Valid || !task.TriggerCommentID.Valid {
+		return "", false
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !commenttrigger.IsClosedIssueStatus(issue.Status) {
+		return "", false
+	}
+	comment, err := s.Queries.GetComment(ctx, task.TriggerCommentID)
+	if err != nil {
+		return cancelReasonIssueAlreadyDone, true
+	}
+	if issue.UpdatedAt.Valid && comment.CreatedAt.Valid && !comment.CreatedAt.Time.After(issue.UpdatedAt.Time) {
+		return cancelReasonTriggerCreatedPreDone, true
+	}
+	if !commenttrigger.LooksActionableOnClosedIssue(comment.Content) {
+		return cancelReasonTriggerNotActionable, true
+	}
+	return "", false
+}
+
 // ClaimTask atomically claims the next queued task for an agent,
 // respecting max_concurrent_tasks.
 func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
@@ -448,6 +491,26 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	}
 
 	slog.Info("task claimed", "task_id", util.UUIDToString(task.ID), "agent_id", util.UUIDToString(agentID))
+
+	if reason, ok := s.closedIssueTriggerCancelReason(ctx, task); ok {
+		cancelled, cancelErr := s.cancelTaskWithReason(ctx, task.ID, reason)
+		if cancelErr != nil {
+			outcome = "error_cancel_closed_issue_trigger"
+			return nil, cancelErr
+		}
+		if cancelled != nil {
+			slog.Info("task claim cancelled: closed issue trigger is not actionable",
+				"task_id", util.UUIDToString(cancelled.ID),
+				"issue_id", util.UUIDToString(cancelled.IssueID),
+				"agent_id", util.UUIDToString(cancelled.AgentID),
+				"reason", reason,
+			)
+			s.ReconcileAgentStatus(ctx, cancelled.AgentID)
+			s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, *cancelled)
+		}
+		outcome = "cancelled_" + reason
+		return nil, nil
+	}
 
 	// Refresh agent status from active tasks. This avoids a stale unconditional
 	// working write racing after a just-cancelled claim.

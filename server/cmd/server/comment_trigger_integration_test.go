@@ -8,6 +8,11 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // authRequestWithAgent makes an authenticated request with X-Agent-ID header,
@@ -44,6 +49,18 @@ func countPendingTasks(t *testing.T, issueID string) int {
 		issueID).Scan(&count)
 	if err != nil {
 		t.Fatalf("failed to count pending tasks: %v", err)
+	}
+	return count
+}
+
+func countTasksByStatus(t *testing.T, issueID, status string) int {
+	t.Helper()
+	var count int
+	err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND status = $2`,
+		issueID, status).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count %s tasks: %v", status, err)
 	}
 	return count
 }
@@ -594,5 +611,113 @@ func TestCommentTriggerMentionAssigneeDoneIssue(t *testing.T) {
 
 	if n := countPendingTasks(t, issueID); n != 1 {
 		t.Errorf("expected 1 pending task after @mention of assignee on done issue, got %d", n)
+	}
+}
+
+func TestCommentTriggerDoneIssueActionability(t *testing.T) {
+	agentID := getAgentID(t)
+	issueID := createIssueAssignedToAgent(t, "Done issue actionability test", agentID)
+	clearTasks(t, issueID)
+	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
+		"status": "done",
+	})
+	resp.Body.Close()
+
+	t.Cleanup(func() {
+		clearTasks(t, issueID)
+		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
+		resp.Body.Close()
+	})
+
+	t.Run("passive comment on done issue does not enqueue", func(t *testing.T) {
+		clearTasks(t, issueID)
+		postComment(t, issueID, "Updated the parent description and marked done. Thanks!", nil)
+		if n := countPendingTasks(t, issueID); n != 0 {
+			t.Errorf("expected 0 pending tasks for passive done-issue comment, got %d", n)
+		}
+	})
+
+	t.Run("actionable comment on done issue enqueues", func(t *testing.T) {
+		clearTasks(t, issueID)
+		postComment(t, issueID, "Please redo this and compare the output", nil)
+		if n := countPendingTasks(t, issueID); n != 1 {
+			t.Errorf("expected 1 pending task for actionable done-issue comment, got %d", n)
+		}
+	})
+}
+
+func TestCommentTriggerDoesNotQueueBehindRunningTask(t *testing.T) {
+	agentID := getAgentID(t)
+	issueID := createIssueAssignedToAgent(t, "Running task coalescing test", agentID)
+	t.Cleanup(func() {
+		clearTasks(t, issueID)
+		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
+		resp.Body.Close()
+	})
+
+	clearTasks(t, issueID)
+	postComment(t, issueID, "First request", nil)
+	if n := countPendingTasks(t, issueID); n != 1 {
+		t.Fatalf("expected first comment to queue 1 task, got %d", n)
+	}
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE issue_id = $1`,
+		issueID); err != nil {
+		t.Fatalf("failed to mark task running: %v", err)
+	}
+
+	postComment(t, issueID, "Second request while the agent is already running", nil)
+	if n := countTasksByStatus(t, issueID, "running"); n != 1 {
+		t.Errorf("expected the original running task to remain, got %d", n)
+	}
+	if n := countPendingTasks(t, issueID); n != 0 {
+		t.Errorf("expected 0 queued/dispatched follow-up tasks behind running work, got %d", n)
+	}
+}
+
+func TestCommentTriggerStaleQueuedTaskCancelledAfterDone(t *testing.T) {
+	agentID := getAgentID(t)
+	issueID := createIssueAssignedToAgent(t, "Stale queued trigger cancellation test", agentID)
+	clearTasks(t, issueID)
+	t.Cleanup(func() {
+		clearTasks(t, issueID)
+		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
+		resp.Body.Close()
+	})
+
+	postComment(t, issueID, "Please fix this before close", nil)
+	if n := countPendingTasks(t, issueID); n != 1 {
+		t.Fatalf("expected 1 queued task before close, got %d", n)
+	}
+	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
+		"status": "done",
+	})
+	resp.Body.Close()
+
+	queries := db.New(testPool)
+	taskSvc := service.NewTaskService(queries, testPool, nil, events.New())
+	agentUUID, err := util.ParseUUID(agentID)
+	if err != nil {
+		t.Fatalf("parse agent id: %v", err)
+	}
+	claimed, err := taskSvc.ClaimTask(context.Background(), agentUUID)
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if claimed != nil {
+		t.Fatalf("expected stale closed-issue trigger to be cancelled instead of claimed, got task %s", util.UUIDToString(claimed.ID))
+	}
+
+	var status, reason string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT status, failure_reason FROM agent_task_queue WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1`,
+		issueID).Scan(&status, &reason); err != nil {
+		t.Fatalf("failed to read cancelled task: %v", err)
+	}
+	if status != "cancelled" {
+		t.Fatalf("expected stale task status cancelled, got %q", status)
+	}
+	if reason != "trigger_created_before_done" {
+		t.Fatalf("expected failure_reason trigger_created_before_done, got %q", reason)
 	}
 }

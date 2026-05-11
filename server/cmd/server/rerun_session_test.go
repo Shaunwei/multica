@@ -23,7 +23,7 @@ func setupRerunTestFixture(t *testing.T) (string, string, string) {
 		SELECT a.id, a.runtime_id FROM agent a
 		JOIN member m ON m.workspace_id = a.workspace_id
 		JOIN "user" u ON u.id = m.user_id
-		WHERE u.email = $1
+		WHERE u.email = $1 AND a.archived_at IS NULL
 		LIMIT 1
 	`, integrationTestEmail).Scan(&agentID, &runtimeID); err != nil {
 		t.Fatalf("failed to find test agent: %v", err)

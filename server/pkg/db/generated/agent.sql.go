@@ -90,6 +90,54 @@ func (q *Queries) CancelAgentTask(ctx context.Context, id pgtype.UUID) (AgentTas
 	return i, err
 }
 
+const cancelAgentTaskWithReason = `-- name: CancelAgentTaskWithReason :one
+UPDATE agent_task_queue
+SET status = 'cancelled',
+    completed_at = now(),
+    error = $2,
+    failure_reason = $3
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session
+`
+
+type CancelAgentTaskWithReasonParams struct {
+	ID            pgtype.UUID `json:"id"`
+	Error         pgtype.Text `json:"error"`
+	FailureReason pgtype.Text `json:"failure_reason"`
+}
+
+func (q *Queries) CancelAgentTaskWithReason(ctx context.Context, arg CancelAgentTaskWithReasonParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, cancelAgentTaskWithReason, arg.ID, arg.Error, arg.FailureReason)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+	)
+	return i, err
+}
+
 const cancelAgentTasksByAgent = `-- name: CancelAgentTasksByAgent :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
@@ -1218,6 +1266,27 @@ func (q *Queries) HasPendingTaskForIssueAndAgent(ctx context.Context, arg HasPen
 	var has_pending bool
 	err := row.Scan(&has_pending)
 	return has_pending, err
+}
+
+const hasActiveTaskForIssueAndAgent = `-- name: HasActiveTaskForIssueAndAgent :one
+SELECT count(*) > 0 AS has_active FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running')
+`
+
+type HasActiveTaskForIssueAndAgentParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// Returns true if a specific agent already has a queued, dispatched, or
+// running task for the given issue. Used by assignee on_comment trigger dedup
+// so a comment posted while the assignee is already working does not enqueue a
+// second stale pass that runs after completion.
+func (q *Queries) HasActiveTaskForIssueAndAgent(ctx context.Context, arg HasActiveTaskForIssueAndAgentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveTaskForIssueAndAgent, arg.IssueID, arg.AgentID)
+	var has_active bool
+	err := row.Scan(&has_active)
+	return has_active, err
 }
 
 const linkTaskToIssue = `-- name: LinkTaskToIssue :exec
