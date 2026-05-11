@@ -47,9 +47,9 @@ type TaskWakeupNotifier interface {
 const triggerSummaryMaxLen = 200
 
 const (
-	cancelReasonIssueAlreadyDone      = "issue_already_done"
-	cancelReasonTriggerNotActionable  = "trigger_not_actionable"
-	cancelReasonTriggerCreatedPreDone = "trigger_created_before_done"
+	cancelReasonIssueAlreadyDone                 = "issue_already_done"
+	cancelReasonTriggerNotActionable             = "trigger_not_actionable"
+	cancelReasonTriggerPredatesLatestIssueUpdate = "trigger_created_before_done"
 )
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
@@ -423,7 +423,7 @@ func (s *TaskService) cancelTaskWithReason(ctx context.Context, taskID pgtype.UU
 	return &task, nil
 }
 
-func (s *TaskService) closedIssueTriggerCancelReason(ctx context.Context, task db.AgentTaskQueue) (string, bool) {
+func (s *TaskService) closedIssueClaimCancelReason(ctx context.Context, task db.AgentTaskQueue) (string, bool) {
 	if !task.IssueID.Valid || !task.TriggerCommentID.Valid {
 		return "", false
 	}
@@ -436,7 +436,9 @@ func (s *TaskService) closedIssueTriggerCancelReason(ctx context.Context, task d
 		return cancelReasonIssueAlreadyDone, true
 	}
 	if issue.UpdatedAt.Valid && comment.CreatedAt.Valid && !comment.CreatedAt.Time.After(issue.UpdatedAt.Time) {
-		return cancelReasonTriggerCreatedPreDone, true
+		// SHA-966's public failure reason is kept stable, but the available
+		// proxy is issue.updated_at, not a dedicated closed-transition column.
+		return cancelReasonTriggerPredatesLatestIssueUpdate, true
 	}
 	if !commenttrigger.LooksActionableOnClosedIssue(comment.Content) {
 		return cancelReasonTriggerNotActionable, true
@@ -492,7 +494,7 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 
 	slog.Info("task claimed", "task_id", util.UUIDToString(task.ID), "agent_id", util.UUIDToString(agentID))
 
-	if reason, ok := s.closedIssueTriggerCancelReason(ctx, task); ok {
+	if reason, ok := s.closedIssueClaimCancelReason(ctx, task); ok {
 		cancelled, cancelErr := s.cancelTaskWithReason(ctx, task.ID, reason)
 		if cancelErr != nil {
 			outcome = "error_cancel_closed_issue_trigger"
