@@ -305,6 +305,15 @@ SET status = 'cancelled', completed_at = now()
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
+-- name: CancelAgentTaskWithReason :one
+UPDATE agent_task_queue
+SET status = 'cancelled',
+    completed_at = now(),
+    error = sqlc.narg('error'),
+    failure_reason = sqlc.narg('failure_reason')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+RETURNING *;
+
 -- name: CountRunningTasks :one
 SELECT count(*) FROM agent_task_queue
 WHERE agent_id = $1 AND status IN ('dispatched', 'running');
@@ -327,6 +336,14 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
 -- for the given issue. Used by @mention trigger dedup.
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched');
+
+-- name: HasActiveTaskForIssueAndAgent :one
+-- Returns true if a specific agent already has a queued, dispatched, or
+-- running task for the given issue. Used by assignee on_comment trigger dedup
+-- so a comment posted while the assignee is already working does not enqueue a
+-- second stale pass that runs after completion.
+SELECT count(*) > 0 AS has_active FROM agent_task_queue
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running');
 
 -- name: ListPendingTasksByRuntime :many
 SELECT * FROM agent_task_queue

@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/commenttrigger"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -1587,21 +1588,25 @@ func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bo
 }
 
 // shouldEnqueueOnComment returns true if a member comment on this issue should
-// trigger the assigned agent. Fires for any status — comments are
-// conversational and can happen at any stage, including after completion
-// (e.g. follow-up questions on a done issue).
-func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue) bool {
+// trigger the assigned agent. Closed issues only wake the assignee for comments
+// that explicitly ask for more work; passive post-completion chatter should not
+// burn another agent run.
+func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, content string) bool {
 	if !h.isAgentAssigneeReady(ctx, issue) {
 		return false
 	}
-	// Coalescing queue: allow enqueue when a task is running (so the agent
-	// picks up new comments on the next cycle) but skip if this agent already
-	// has a pending task (natural dedup for rapid-fire comments).
-	hasPending, err := h.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+	if commenttrigger.IsClosedIssueStatus(issue.Status) && !commenttrigger.LooksActionableOnClosedIssue(content) {
+		return false
+	}
+	// Coalescing queue: suppress enqueue while this assignee already has any
+	// active task for the issue. A comment posted during a running task should be
+	// handled by the in-flight context, not converted into a stale second pass
+	// that dispatches after the issue is already complete.
+	hasActive, err := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
 		AgentID: issue.AssigneeID,
 	})
-	if err != nil || hasPending {
+	if err != nil || hasActive {
 		return false
 	}
 	return true
