@@ -43,8 +43,7 @@ import type {
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
   RuntimeLocalSkillImportRequest,
-  TimelinePage,
-  TimelinePageParam,
+  TimelineEntry,
   AssigneeFrequencyEntry,
   TaskMessagePayload,
   Attachment,
@@ -89,13 +88,15 @@ import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
+  AttachmentResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
+  EMPTY_ATTACHMENT,
   EMPTY_LIST_ISSUES_RESPONSE,
-  EMPTY_TIMELINE_PAGE,
+  EMPTY_TIMELINE_ENTRIES,
   ListIssuesResponseSchema,
   SubscribersListSchema,
-  TimelinePageSchema,
+  TimelineEntriesSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -337,6 +338,7 @@ export class ApiClient {
 
   async markOnboardingComplete(payload?: {
     completion_path?: OnboardingCompletionPath;
+    workspace_id?: string;
   }): Promise<User> {
     return this.fetch("/api/me/onboarding/complete", {
       method: "POST",
@@ -445,7 +447,7 @@ export class ApiClient {
     });
   }
 
-  async quickCreateIssue(data: { agent_id: string; prompt: string }): Promise<{ task_id: string }> {
+  async quickCreateIssue(data: { agent_id: string; prompt: string; project_id?: string | null }): Promise<{ task_id: string }> {
     return this.fetch("/api/issues/quick-create", {
       method: "POST",
       body: JSON.stringify(data),
@@ -519,20 +521,11 @@ export class ApiClient {
     });
   }
 
-  async listTimeline(
-    issueId: string,
-    pageParam: TimelinePageParam = { mode: "latest" },
-    limit = 50,
-  ): Promise<TimelinePage> {
-    const params = new URLSearchParams();
-    params.set("limit", String(limit));
-    if (pageParam.mode === "before") params.set("before", pageParam.cursor);
-    else if (pageParam.mode === "after") params.set("after", pageParam.cursor);
-    else if (pageParam.mode === "around") params.set("around", pageParam.id);
+  async listTimeline(issueId: string): Promise<TimelineEntry[]> {
     const raw = await this.fetch<unknown>(
-      `/api/issues/${issueId}/timeline?${params.toString()}`,
+      `/api/issues/${issueId}/timeline`,
     );
-    return parseWithFallback(raw, TimelinePageSchema, EMPTY_TIMELINE_PAGE, {
+    return parseWithFallback(raw, TimelineEntriesSchema, EMPTY_TIMELINE_ENTRIES, {
       endpoint: "GET /api/issues/:id/timeline",
     });
   }
@@ -550,6 +543,14 @@ export class ApiClient {
 
   async deleteComment(commentId: string): Promise<void> {
     await this.fetch(`/api/comments/${commentId}`, { method: "DELETE" });
+  }
+
+  async resolveComment(commentId: string): Promise<Comment> {
+    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
+  }
+
+  async unresolveComment(commentId: string): Promise<Comment> {
+    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
   }
 
   async addReaction(commentId: string, emoji: string): Promise<Reaction> {
@@ -659,6 +660,16 @@ export class ApiClient {
 
   async deleteRuntime(runtimeId: string): Promise<void> {
     await this.fetch(`/api/runtimes/${runtimeId}`, { method: "DELETE" });
+  }
+
+  async updateRuntime(
+    runtimeId: string,
+    patch: { timezone?: string },
+  ): Promise<AgentRuntime> {
+    return this.fetch(`/api/runtimes/${runtimeId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
   }
 
   async getRuntimeUsage(runtimeId: string, params?: { days?: number }): Promise<RuntimeUsage[]> {
@@ -797,6 +808,12 @@ export class ApiClient {
     });
   }
 
+  async rerunIssue(issueId: string): Promise<AgentTask> {
+    return this.fetch(`/api/issues/${issueId}/rerun`, {
+      method: "POST",
+    });
+  }
+
   // Inbox
   async listInbox(): Promise<InboxItem[]> {
     return this.fetch("/api/inbox");
@@ -849,6 +866,7 @@ export class ApiClient {
     google_client_id?: string;
     posthog_key?: string;
     posthog_host?: string;
+    analytics_environment?: string;
   }> {
     return this.fetch("/api/config");
   }
@@ -1084,6 +1102,17 @@ export class ApiClient {
 
   async listAttachments(issueId: string): Promise<Attachment[]> {
     return this.fetch(`/api/issues/${issueId}/attachments`);
+  }
+
+  // Fetches a fresh attachment metadata record. The server re-signs
+  // `download_url` on every call (30 min expiry), so the click-time
+  // download flow uses this endpoint to avoid handing the user a stale
+  // signed URL cached in TanStack Query.
+  async getAttachment(id: string): Promise<Attachment> {
+    const raw = await this.fetch<unknown>(`/api/attachments/${id}`);
+    return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+      endpoint: "GET /api/attachments/{id}",
+    });
   }
 
   async deleteAttachment(id: string): Promise<void> {
