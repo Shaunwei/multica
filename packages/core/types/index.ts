@@ -23,6 +23,9 @@ export type {
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
+  DashboardUsageDaily,
+  DashboardUsageByAgent,
+  DashboardAgentRunTime,
   RuntimeUpdate,
   RuntimeUpdateStatus,
   RuntimeModel,
@@ -67,6 +70,13 @@ export type {
   ListProjectResourcesResponse,
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
+export type {
+  GitHubInstallation,
+  GitHubPullRequest,
+  GitHubPullRequestState,
+  ListGitHubInstallationsResponse,
+  GitHubConnectResponse,
+} from "./github";
 export type {
   Autopilot,
   AutopilotStatus,
