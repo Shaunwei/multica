@@ -58,6 +58,9 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
+  | "squad:created"
+  | "squad:updated"
+  | "squad:deleted"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -79,6 +82,7 @@ export interface WSMessage<T = unknown> {
   type: WSEventType;
   payload: T;
   actor_id?: string;
+  actor_type?: string;
 }
 
 export interface IssueCreatedPayload {
