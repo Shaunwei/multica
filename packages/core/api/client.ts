@@ -2,6 +2,7 @@ import type {
   Issue,
   CreateIssueRequest,
   UpdateIssueRequest,
+  GroupedIssuesResponse,
   ListIssuesResponse,
   SearchIssuesResponse,
   SearchProjectsResponse,
@@ -9,6 +10,7 @@ import type {
   CreateMemberRequest,
   UpdateMemberRequest,
   ListIssuesParams,
+  ListGroupedIssuesParams,
   Agent,
   CreateAgentRequest,
   AgentTemplate,
@@ -45,6 +47,7 @@ import type {
   DashboardUsageDaily,
   DashboardUsageByAgent,
   DashboardAgentRunTime,
+  DashboardRunTimeDaily,
   RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
@@ -86,6 +89,8 @@ import type {
   ListAutopilotsResponse,
   GetAutopilotResponse,
   ListAutopilotRunsResponse,
+  ListWebhookDeliveriesResponse,
+  WebhookDelivery,
   NotificationPreferenceResponse,
   NotificationPreferences,
   GitHubPullRequest,
@@ -93,6 +98,7 @@ import type {
   GitHubConnectResponse,
   Squad,
   SquadMember,
+  SquadMemberStatusListResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -107,17 +113,30 @@ import {
   CommentsListSchema,
   CreateAgentFromTemplateResponseSchema,
   DashboardAgentRunTimeListSchema,
+  DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
+  EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_SQUAD_MEMBER_STATUS_LIST,
   EMPTY_TIMELINE_ENTRIES,
+  EMPTY_USER,
+  EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+  EMPTY_WEBHOOK_DELIVERY,
+  GroupedIssuesResponseSchema,
   ListIssuesResponseSchema,
+  ListWebhookDeliveriesResponseSchema,
+  OnboardingNoRuntimeBootstrapResponseSchema,
+  OnboardingRuntimeBootstrapResponseSchema,
+  SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
+  UserSchema,
+  WebhookDeliveryResponseSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -147,51 +166,29 @@ export interface LoginResponse {
   user: User;
 }
 
-// --- Starter content (post-onboarding import) -----------------------------
-// Shape mirrors the Go request/response in handler/onboarding.go.
-//
-// The client sends both branches of sub-issues and an unbound welcome
-// issue template (title + description, no `agent_id`). The SERVER picks
-// the branch by inspecting the workspace's agent list inside the
-// import transaction. This removes the client as a trusted decider —
-// even if the client has a stale agent cache or lies, the server uses
-// the DB as source of truth.
-
-export interface ImportStarterIssuePayload {
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  /** Server uses `user_id` (per app-wide AssigneePicker convention)
-   *  as assignee when true. No member_id is threaded through. */
-  assign_to_self: boolean;
-}
-
-export interface ImportStarterWelcomeIssueTemplate {
-  title: string;
-  description: string;
-  /** Defaults to "high" on server when empty. */
-  priority: string;
-}
-
-export interface ImportStarterContentPayload {
+export interface OnboardingRuntimeBootstrapResponse {
   workspace_id: string;
-  project: { title: string; description: string; icon: string };
-  /** Always sent. Server creates it only when an agent exists in the
-   *  workspace; ignored otherwise. Agent id is picked by the server. */
-  welcome_issue_template: ImportStarterWelcomeIssueTemplate;
-  /** Used when the workspace has at least one agent. */
-  agent_guided_sub_issues: ImportStarterIssuePayload[];
-  /** Used when the workspace has zero agents. */
-  self_serve_sub_issues: ImportStarterIssuePayload[];
+  agent_id: string;
+  issue_id: string;
 }
 
-export interface ImportStarterContentResponse {
-  user: User;
-  project_id: string;
-  /** Non-null when server took the agent-guided branch. */
-  welcome_issue_id: string | null;
+const EMPTY_ONBOARDING_RUNTIME_BOOTSTRAP_RESPONSE:
+  OnboardingRuntimeBootstrapResponse = {
+  workspace_id: "",
+  agent_id: "",
+  issue_id: "",
+};
+
+export interface OnboardingNoRuntimeBootstrapResponse {
+  workspace_id: string;
+  issue_id: string;
 }
+
+const EMPTY_ONBOARDING_NO_RUNTIME_BOOTSTRAP_RESPONSE:
+  OnboardingNoRuntimeBootstrapResponse = {
+  workspace_id: "",
+  issue_id: "",
+};
 
 export class ApiError extends Error {
   readonly status: number;
@@ -389,7 +386,10 @@ export class ApiClient {
   }
 
   async getMe(): Promise<User> {
-    return this.fetch("/api/me");
+    const raw = await this.fetch<unknown>("/api/me");
+    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
+      endpoint: "GET /api/me",
+    });
   }
 
   async markOnboardingComplete(payload?: {
@@ -400,6 +400,43 @@ export class ApiClient {
       method: "POST",
       body: payload ? JSON.stringify(payload) : undefined,
     });
+  }
+
+  async bootstrapOnboardingRuntime(payload: {
+    workspace_id: string;
+    runtime_id: string;
+  }): Promise<OnboardingRuntimeBootstrapResponse> {
+    const raw = await this.fetch<unknown>(
+      "/api/me/onboarding/runtime-bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      OnboardingRuntimeBootstrapResponseSchema,
+      EMPTY_ONBOARDING_RUNTIME_BOOTSTRAP_RESPONSE,
+      { endpoint: "POST /api/me/onboarding/runtime-bootstrap" },
+    );
+  }
+
+  async bootstrapOnboardingNoRuntime(payload: {
+    workspace_id: string;
+  }): Promise<OnboardingNoRuntimeBootstrapResponse> {
+    const raw = await this.fetch<unknown>(
+      "/api/me/onboarding/no-runtime-bootstrap",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      OnboardingNoRuntimeBootstrapResponseSchema,
+      EMPTY_ONBOARDING_NO_RUNTIME_BOOTSTRAP_RESPONSE,
+      { endpoint: "POST /api/me/onboarding/no-runtime-bootstrap" },
+    );
   }
 
   async joinCloudWaitlist(payload: {
@@ -421,38 +458,13 @@ export class ApiClient {
     });
   }
 
-  /**
-   * Imports the Getting Started project + optional welcome issue + sub-issues
-   * in a single server-side transaction. Gated by an atomic
-   * starter_content_state: NULL → 'imported' claim — a second call returns
-   * 409 (already decided) and creates nothing new.
-   *
-   * The content templates live in TypeScript (see
-   * @multica/views/onboarding/utils/starter-content-templates) and are
-   * rendered from the user's questionnaire answers before being sent.
-   */
-  async importStarterContent(
-    payload: ImportStarterContentPayload,
-  ): Promise<ImportStarterContentResponse> {
-    return this.fetch("/api/me/starter-content/import", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async dismissStarterContent(payload?: {
-    workspace_id?: string;
-  }): Promise<User> {
-    return this.fetch("/api/me/starter-content/dismiss", {
-      method: "POST",
-      body: payload ? JSON.stringify(payload) : undefined,
-    });
-  }
-
   async updateMe(data: UpdateMeRequest): Promise<User> {
-    return this.fetch("/api/me", {
+    const raw = await this.fetch<unknown>("/api/me", {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
+      endpoint: "PATCH /api/me",
     });
   }
 
@@ -468,11 +480,44 @@ export class ApiClient {
     if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
     if (params?.creator_id) search.set("creator_id", params.creator_id);
     if (params?.project_id) search.set("project_id", params.project_id);
+    if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
     if (params?.open_only) search.set("open_only", "true");
+    if (params?.scheduled) search.set("scheduled", "true");
     const path = `/api/issues?${search}`;
     const raw = await this.fetch<unknown>(path);
     return parseWithFallback(raw, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues",
+    });
+  }
+
+  async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
+    const search = new URLSearchParams({ group_by: params.group_by });
+    if (params.limit) search.set("limit", String(params.limit));
+    if (params.offset) search.set("offset", String(params.offset));
+    if (params.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
+    if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
+    if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
+    if (params.assignee_id) search.set("assignee_id", params.assignee_id);
+    if (params.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
+    if (params.creator_id) search.set("creator_id", params.creator_id);
+    if (params.project_id) search.set("project_id", params.project_id);
+    if (params.involves_user_id) search.set("involves_user_id", params.involves_user_id);
+    if (params.assignee_filters?.length) {
+      search.set("assignee_filters", params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","));
+    }
+    if (params.include_no_assignee) search.set("include_no_assignee", "true");
+    if (params.creator_filters?.length) {
+      search.set("creator_filters", params.creator_filters.map((f) => `${f.type}:${f.id}`).join(","));
+    }
+    if (params.project_ids?.length) search.set("project_ids", params.project_ids.join(","));
+    if (params.include_no_project) search.set("include_no_project", "true");
+    if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
+    if (params.group_assignee_type) search.set("group_assignee_type", params.group_assignee_type);
+    if (params.group_assignee_id) search.set("group_assignee_id", params.group_assignee_id);
+    const raw = await this.fetch<unknown>(`/api/issues/grouped?${search}`);
+    return parseWithFallback(raw, GroupedIssuesResponseSchema, EMPTY_GROUPED_ISSUES_RESPONSE, {
+      endpoint: "GET /api/issues/grouped",
     });
   }
 
@@ -858,6 +903,21 @@ export class ApiClient {
     );
   }
 
+  async getDashboardRunTimeDaily(
+    params: { days?: number; project_id?: string | null },
+  ): Promise<DashboardRunTimeDaily[]> {
+    const search = new URLSearchParams();
+    if (params.days) search.set("days", String(params.days));
+    if (params.project_id) search.set("project_id", params.project_id);
+    const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
+    return parseWithFallback<DashboardRunTimeDaily[]>(
+      raw,
+      DashboardRunTimeDailyListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/runtime/daily" },
+    );
+  }
+
   async initiateUpdate(
     runtimeId: string,
     targetVersion: string,
@@ -966,9 +1026,10 @@ export class ApiClient {
     });
   }
 
-  async rerunIssue(issueId: string): Promise<AgentTask> {
+  async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/rerun`, {
       method: "POST",
+      body: JSON.stringify(taskId ? { task_id: taskId } : {}),
     });
   }
 
@@ -1045,7 +1106,7 @@ export class ApiClient {
     });
   }
 
-  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[] }): Promise<Workspace> {
+  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string }): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -1490,6 +1551,17 @@ export class ApiClient {
     return this.fetch(`/api/squads/${squadId}/members/role`, { method: "PATCH", body: JSON.stringify(data) });
   }
 
+  // Per-squad members status snapshot: one row per member with derived
+  // working/idle/offline/unstable plus the issues each agent is currently
+  // running. Parsed with a lenient schema so a new server-side status
+  // value or extra field can't white-screen the Squad page (#2143).
+  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatusListResponse> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
+    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
+      endpoint: "GET /api/squads/:id/members/status",
+    }) as SquadMemberStatusListResponse;
+  }
+
   // Autopilots
   async listAutopilots(params?: { status?: string }): Promise<ListAutopilotsResponse> {
     const search = new URLSearchParams();
@@ -1530,6 +1602,13 @@ export class ApiClient {
     return this.fetch(`/api/autopilots/${id}/runs?${search}`);
   }
 
+  // Returns a single run including its full trigger_payload. List responses
+  // omit trigger_payload to keep them small (a webhook envelope can be
+  // up to 256 KiB × limit rows), so the detail view fetches via this route.
+  async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
+    return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
+  }
+
   async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
     return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
@@ -1546,6 +1625,74 @@ export class ApiClient {
 
   async deleteAutopilotTrigger(autopilotId: string, triggerId: string): Promise<void> {
     await this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, { method: "DELETE" });
+  }
+
+  async rotateAutopilotTriggerWebhookToken(
+    autopilotId: string,
+    triggerId: string,
+  ): Promise<AutopilotTrigger> {
+    return this.fetch(
+      `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
+      { method: "POST" },
+    );
+  }
+
+  // Webhook deliveries — list is slim (no raw_body / selected_headers /
+  // response_body); detail returns the full row. Both responses are parsed
+  // through a lenient schema so an unknown server-side `status` /
+  // `signature_status` value degrades to a generic row instead of dropping
+  // the whole list.
+  async listAutopilotDeliveries(
+    autopilotId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ListWebhookDeliveriesResponse> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", params.limit.toString());
+    if (params?.offset) search.set("offset", params.offset.toString());
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/deliveries?${search}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListWebhookDeliveriesResponseSchema,
+      EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id/deliveries" },
+    );
+  }
+
+  async getAutopilotDelivery(
+    autopilotId: string,
+    deliveryId: string,
+  ): Promise<WebhookDelivery> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}`,
+    );
+    return parseWithFallback(
+      raw,
+      WebhookDeliveryResponseSchema,
+      { ...EMPTY_WEBHOOK_DELIVERY, id: deliveryId, autopilot_id: autopilotId },
+      { endpoint: "GET /api/autopilots/:id/deliveries/:deliveryId" },
+    );
+  }
+
+  // Replay creates a NEW delivery row referencing the original via
+  // `replayed_from_delivery_id`. Server rejects replays of
+  // signature-invalid / rejected deliveries with 400 — the UI keeps the
+  // button disabled for those rows, but the server is the source of truth.
+  async replayAutopilotDelivery(
+    autopilotId: string,
+    deliveryId: string,
+  ): Promise<WebhookDelivery> {
+    const raw = await this.fetch<unknown>(
+      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      WebhookDeliveryResponseSchema,
+      { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
+      { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay" },
+    );
   }
 
   // GitHub integration

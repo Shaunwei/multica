@@ -48,10 +48,11 @@ describe("ApiClient", () => {
     await client.getAutopilot("ap-1");
     await client.createAutopilot({
       title: "Daily triage",
+      project_id: "project-1",
       assignee_id: "agent-1",
       execution_mode: "create_issue",
     });
-    await client.updateAutopilot("ap-1", { status: "paused" });
+    await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
     await client.triggerAutopilot("ap-1");
     await client.listAutopilotRuns("ap-1", { limit: 10, offset: 20 });
@@ -62,6 +63,7 @@ describe("ApiClient", () => {
     });
     await client.updateAutopilotTrigger("ap-1", "tr-1", { enabled: false });
     await client.deleteAutopilotTrigger("ap-1", "tr-1");
+    await client.rotateAutopilotTriggerWebhookToken("ap-1", "tr-1");
 
     const calls = fetchMock.mock.calls.map(([url, init]) => ({
       url,
@@ -77,6 +79,7 @@ describe("ApiClient", () => {
         method: "POST",
         body: JSON.stringify({
           title: "Daily triage",
+          project_id: "project-1",
           assignee_id: "agent-1",
           execution_mode: "create_issue",
         }),
@@ -84,7 +87,7 @@ describe("ApiClient", () => {
       {
         url: "https://api.example.test/api/autopilots/ap-1",
         method: "PATCH",
-        body: JSON.stringify({ status: "paused" }),
+        body: JSON.stringify({ status: "paused", project_id: null }),
       },
       { url: "https://api.example.test/api/autopilots/ap-1", method: "DELETE" },
       { url: "https://api.example.test/api/autopilots/ap-1/trigger", method: "POST" },
@@ -104,6 +107,10 @@ describe("ApiClient", () => {
         body: JSON.stringify({ enabled: false }),
       },
       { url: "https://api.example.test/api/autopilots/ap-1/triggers/tr-1", method: "DELETE" },
+      {
+        url: "https://api.example.test/api/autopilots/ap-1/triggers/tr-1/rotate-webhook-token",
+        method: "POST",
+      },
     ]);
   });
 
