@@ -1259,7 +1259,7 @@ func TestOpenclawProcessOutputDeeplyIndentedFixture(t *testing.T) {
 		t.Fatalf("fixture is not pretty-printed; this test must run against multi-line JSON")
 	}
 
-	result, ok := parseWholeBufferOpenclawResult(data)
+	result, ok := parseWholeBufferOpenclawResult(data, false)
 	if !ok {
 		t.Fatalf("parseWholeBufferOpenclawResult failed; the whole-buffer fast path is broken")
 	}

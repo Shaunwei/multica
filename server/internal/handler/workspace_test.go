@@ -36,6 +36,93 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	}
 }
 
+// TestCreateWorkspace_DoesNotMarkOnboarded guards the onboarding
+// contract: creating a workspace MUST leave user.onboarded_at NULL so
+// the route guard in apps/web/app/[workspaceSlug]/layout.tsx (and the
+// desktop App.tsx overlay decision) can redirect the un-onboarded user
+// back to /onboarding to finish Step 3. The previous behavior atomically
+// set onboarded_at inside CreateWorkspace; this test makes the new
+// invariant explicit and regression-protected.
+//
+// CompleteOnboarding (Step 3 exit) and AcceptInvitation are the only
+// remaining handlers that flip onboarded_at.
+func TestCreateWorkspace_DoesNotMarkOnboarded(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	const slug = "handler-tests-onboarded-null"
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	// Ensure the test user starts un-onboarded so the assertion is meaningful.
+	_, _ = testPool.Exec(ctx, `UPDATE "user" SET onboarded_at = NULL WHERE id = $1`, testUserID)
+
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
+		_, _ = testPool.Exec(context.Background(), `UPDATE "user" SET onboarded_at = NULL WHERE id = $1`, testUserID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/workspaces", map[string]any{
+		"name": "Onboarding Invariant Probe",
+		"slug": slug,
+	})
+	testHandler.CreateWorkspace(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateWorkspace: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var onboardedAt *string
+	if err := testPool.QueryRow(ctx, `SELECT onboarded_at FROM "user" WHERE id = $1`, testUserID).Scan(&onboardedAt); err != nil {
+		t.Fatalf("lookup user: %v", err)
+	}
+	if onboardedAt != nil {
+		t.Fatalf("CreateWorkspace marked user as onboarded; expected NULL, got %q. The workspace layout hard gate relies on this staying NULL until Step 3 CompleteOnboarding fires.", *onboardedAt)
+	}
+}
+
+// TestCreateWorkspace_DisabledByConfig guards the self-host gate added by
+// #3433: when DisableWorkspaceCreation is true on the handler config, every
+// caller — even an already-authenticated user — must receive 403 and the
+// workspace row must not be written.
+func TestCreateWorkspace_DisabledByConfig(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	const slug = "handler-tests-disabled-create"
+	ctx := context.Background()
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
+	})
+
+	prev := testHandler.cfg
+	testHandler.cfg = Config{
+		AllowSignup:              prev.AllowSignup,
+		DisableWorkspaceCreation: true,
+	}
+	t.Cleanup(func() { testHandler.cfg = prev })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/workspaces", map[string]any{
+		"name": "Disabled Create",
+		"slug": slug,
+	})
+	testHandler.CreateWorkspace(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("CreateWorkspace: expected 403 with flag on, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM workspace WHERE slug = $1`, slug).Scan(&count); err != nil {
+		t.Fatalf("count workspaces: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no workspace row to be written when gate fires, found %d", count)
+	}
+}
+
 // TestDeleteWorkspace_RequiresOwner exercises the in-handler authorization
 // added to DeleteWorkspace by calling the handler directly (bypassing the
 // router-level RequireWorkspaceRoleFromURL middleware). Without the handler

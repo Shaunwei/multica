@@ -154,6 +154,55 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 	}
 }
 
+// TestBuildQuickCreatePromptParentPinning verifies that when the user
+// opened quick-create from "Add sub issue" on an existing issue, the prompt
+// instructs the agent to pass `--parent <uuid>` so the new issue is filed
+// as a sub-issue. The frontend already seeds parent_issue_id silently
+// through the manual→agent switch, so this is the last hop that has to
+// hold up — without the prompt instruction the agent would create a
+// standalone issue and the sub-issue relationship would be silently
+// dropped.
+func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
+	const (
+		parentID         = "33333333-2222-1111-4444-555555555555"
+		parentIdentifier = "MUL-2534"
+	)
+	out := buildQuickCreatePrompt(Task{
+		QuickCreatePrompt:     "fix the login button color",
+		ParentIssueID:         parentID,
+		ParentIssueIdentifier: parentIdentifier,
+	})
+	mustContain := []string{
+		"--parent \"" + parentID + "\"",
+		parentIdentifier,
+		"modal entry point is authoritative",
+		"filed as a sub-issue",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("buildQuickCreatePrompt with parent missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+
+	// When only the UUID is available (identifier lookup failed on claim),
+	// the agent must still get the --parent instruction so the sub-issue
+	// intent isn't silently dropped.
+	uuidOnly := buildQuickCreatePrompt(Task{
+		QuickCreatePrompt: "fix the login button color",
+		ParentIssueID:     parentID,
+	})
+	if !strings.Contains(uuidOnly, "--parent \""+parentID+"\"") {
+		t.Errorf("buildQuickCreatePrompt with parent UUID only must still pin --parent, got:\n%s", uuidOnly)
+	}
+
+	// Without a parent, the prompt must NOT mention --parent at all — a
+	// plain quick-create run should not start filing sub-issues.
+	plain := buildQuickCreatePrompt(Task{QuickCreatePrompt: "fix the login button color"})
+	if strings.Contains(plain, "--parent") {
+		t.Errorf("buildQuickCreatePrompt without parent must NOT mention --parent, got:\n%s", plain)
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionForMemberTrigger verifies that the
 // squad leader no_action prohibition is injected in the per-turn prompt
 // regardless of whether the triggering comment was posted by an agent or
@@ -197,57 +246,6 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 	out := BuildPrompt(task, "claude")
 	if !strings.Contains(out, "Squad leader no_action rule") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for agent-triggered comments, got:\n%s", out)
-	}
-}
-
-// TestBuildPromptCommentTriggerPromotesThreadReads pins MUL-2387: the
-// per-turn prompt for a comment-triggered task must steer the agent at the
-// thread-aware reads first (--thread anchored on the trigger comment id,
-// then --recent N as a fallback with cursor guidance) instead of the legacy
-// "dump the entire comment list" recipe. Locking this in test stops the
-// guidance from decaying back to a full-flat-dump on prompt edits.
-func TestBuildPromptCommentTriggerPromotesThreadReads(t *testing.T) {
-	const (
-		issueID   = "issue-thread-1"
-		triggerID = "trigger-comment-1"
-	)
-	task := Task{
-		IssueID:               issueID,
-		TriggerCommentID:      triggerID,
-		TriggerCommentContent: "anything",
-		TriggerAuthorType:     "member",
-		TriggerAuthorName:     "Bohan",
-	}
-	out := BuildPrompt(task, "claude")
-
-	mustContain := []string{
-		// Thread-first read pinned by trigger comment id.
-		"--thread " + triggerID,
-		"`multica issue comment list " + issueID + " --thread " + triggerID + " --output json`",
-		// --recent fallback uses the documented default N=20.
-		"--recent 20 --output json",
-		// Cursor walks via the stderr line the CLI emits, not invented flags.
-		"Next thread cursor:",
-		"--before",
-		"--before-id",
-		// --since is preserved as an additional, combinable knob.
-		"--since",
-		"may combine with `--thread` or `--recent`",
-		// Discourage the unfiltered full dump on long-running issues.
-		"Avoid the unfiltered",
-		"wastes context",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildCommentPrompt missing thread-first guidance %q\n--- output ---\n%s", s, out)
-		}
-	}
-
-	// The old "dump everything via --output json alone" prose is exactly the
-	// pattern this PR is replacing — guard against the legacy phrasing
-	// sneaking back in.
-	if strings.Contains(out, "returns all comments for the issue (server caps at 2000)") {
-		t.Errorf("buildCommentPrompt still carries the legacy full-dump phrasing")
 	}
 }
 
@@ -296,5 +294,111 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 	out := BuildPrompt(task, "claude")
 	if strings.Contains(out, "Squad leader no_action rule") {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
+	}
+}
+
+// TestBuildPromptNewCommentsHint pins that a comment-triggered task whose agent
+// ran before on this issue (NewCommentsSince set, NewCommentCount > 0) gets the
+// since-delta hint with the ISSUE-WIDE new-comment count, but is steered to read
+// the triggering (parent) thread first rather than blindly pulling every new
+// comment.
+func TestBuildPromptNewCommentsHint(t *testing.T) {
+	const (
+		issueID = "issue-new-1"
+		since   = "2026-05-28T11:00:00Z"
+	)
+	task := Task{
+		IssueID:               issueID,
+		TriggerCommentID:      "trigger-1",
+		TriggerCommentContent: "please look",
+		TriggerAuthorType:     "member",
+		NewCommentCount:       3,
+		NewCommentsSince:      since,
+	}
+	out := BuildPrompt(task, "claude")
+
+	// Issue-wide count (reverted from the thread-scoped wording).
+	if !strings.Contains(out, "3 new comment(s) on this issue since your last run") {
+		t.Errorf("hint must report the issue-wide new-comment count, got:\n%s", out)
+	}
+	// Don't-blindly-read-all guidance.
+	if !strings.Contains(out, "blindly") {
+		t.Errorf("hint must discourage blindly reading every new comment, got:\n%s", out)
+	}
+	// Parent thread first: the --thread <trigger> read is the prioritized action.
+	if !strings.Contains(out, "multica issue comment list "+issueID+" --thread trigger-1 --since "+since+" --output json") {
+		t.Errorf("hint must point at the triggering (parent) thread --since read first, got:\n%s", out)
+	}
+	if !strings.Contains(out, "--tail 30") {
+		t.Errorf("hint must offer the full-thread (--tail 30) option, got:\n%s", out)
+	}
+	// Issue-wide catch-up is demoted to an only-if-needed fallback.
+	if !strings.Contains(out, "multica issue comment list "+issueID+" --since "+since+" --output json") {
+		t.Errorf("hint must keep the issue-wide --since catch-up as a fallback, got:\n%s", out)
+	}
+	// The old cursor-heavy paragraph must be gone.
+	if strings.Contains(out, "Next reply cursor") || strings.Contains(out, "--before-id") {
+		t.Errorf("the old cursor-pagination paragraph must not render, got:\n%s", out)
+	}
+}
+
+// TestBuildPromptColdStartThreadRead pins the cold-start case: no prior run means
+// no since anchor (NewCommentsSince empty), so we suppress the delta hint and
+// instead point the agent at the triggering CONVERSATION (--thread <trigger>
+// --tail 30) rather than dumping the flat timeline.
+func TestBuildPromptColdStartThreadRead(t *testing.T) {
+	const issueID = "issue-cold-1"
+	task := Task{
+		IssueID:               issueID,
+		TriggerCommentID:      "trigger-1",
+		TriggerCommentContent: "hi",
+		TriggerAuthorType:     "member",
+		NewCommentCount:       0,
+		NewCommentsSince:      "",
+	}
+	out := BuildPrompt(task, "claude")
+	if strings.Contains(out, "new comment(s) since your last run") {
+		t.Errorf("no since-delta hint should render on cold start, got:\n%s", out)
+	}
+	if !strings.Contains(out, "multica issue comment list "+issueID+" --thread trigger-1 --tail 30 --output json") {
+		t.Errorf("cold start must point at the triggering thread read, got:\n%s", out)
+	}
+}
+
+// TestBuildPromptResumedNoDeltaDoesNotForceThreadRead pins the warm/no-delta
+// path: when a prior provider session is actually being resumed, the triggering
+// comment is already embedded in the per-turn prompt, so the agent should not
+// be told to re-read the triggering thread's latest 30 replies by default.
+func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
+	const issueID = "issue-resumed-1"
+	task := Task{
+		IssueID:               issueID,
+		TriggerCommentID:      "trigger-1",
+		TriggerCommentContent: "hi again",
+		TriggerAuthorType:     "member",
+		PriorSessionID:        "session-123",
+		NewCommentCount:       0,
+		NewCommentsSince:      "",
+	}
+	out := BuildPrompt(task, "claude")
+
+	for _, want := range []string{
+		"triggering comment is already included above",
+		"No other new comments on this issue since your last run",
+		"Do not re-read comment history by default",
+		"Only if the resumed session is missing thread context",
+		"multica issue comment list " + issueID + " --thread trigger-1 --tail 30 --output json",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resumed/no-delta prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	// The stale thread-scoped wording (since-delta used to be thread-scoped)
+	// must not reappear.
+	if strings.Contains(out, "scoped to the triggering thread") {
+		t.Errorf("resumed/no-delta prompt must not claim the delta is thread-scoped, got:\n%s", out)
+	}
+	if strings.Contains(out, "Read the triggering conversation first") {
+		t.Errorf("resumed/no-delta prompt must not use the cold-start forced-read wording, got:\n%s", out)
 	}
 }

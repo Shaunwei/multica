@@ -4,14 +4,24 @@ import type {
   AgentTemplate,
   AgentTemplateSummary,
   Attachment,
+  BillingBalance,
+  BillingBatchesPage,
+  BillingCheckoutSessionStatus,
+  BillingPriceTier,
+  BillingTopupsPage,
+  BillingTransactionsPage,
   CreateAgentFromTemplateResponse,
+  CreateBillingCheckoutSessionResponse,
+  CreateBillingPortalSessionResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListWebhookDeliveriesResponse,
+  Squad,
   TimelineEntry,
   User,
   WebhookDelivery,
 } from "../types";
+import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
 // ---------------------------------------------------------------------------
 // Schemas for the highest-risk API endpoints — those whose responses drive
@@ -135,7 +145,12 @@ export const CommentSchema = z.object({
 
 export const CommentsListSchema = z.array(CommentSchema);
 
-const IssueSchema = z.object({
+// Metadata is primitive-only by API/DB contract. Stay lenient on shape:
+// unknown keys land as `unknown` to a caller, but the field itself defaults
+// to {} so consumers never need to nil-guard `issue.metadata`.
+const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
+
+export const IssueSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   number: z.number(),
@@ -153,6 +168,7 @@ const IssueSchema = z.object({
   position: z.number(),
   start_date: z.string().nullable(),
   due_date: z.string().nullable(),
+  metadata: IssueMetadataSchema,
   reactions: z.array(z.unknown()).optional(),
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
@@ -199,16 +215,41 @@ export const ChildIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),
 }).loose();
 
-export const OnboardingRuntimeBootstrapResponseSchema = z.object({
-  workspace_id: z.string(),
-  agent_id: z.string(),
-  issue_id: z.string(),
+export const CloudRuntimeNodeSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  instance_id: z.string(),
+  region: z.string(),
+  instance_type: z.string(),
+  image_id: z.string(),
+  subnet_id: z.string(),
+  name: z.string(),
+  status: z.string(),
+  tags: z.record(z.string(), z.string()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string(),
+  updated_at: z.string(),
 }).loose();
 
-export const OnboardingNoRuntimeBootstrapResponseSchema = z.object({
-  workspace_id: z.string(),
-  issue_id: z.string(),
-}).loose();
+export const CloudRuntimeNodeListSchema = z.array(CloudRuntimeNodeSchema);
+
+export const EMPTY_CLOUD_RUNTIME_NODE_LIST: CloudRuntimeNode[] = [];
+
+export const EMPTY_CLOUD_RUNTIME_NODE: CloudRuntimeNode = {
+  id: "",
+  owner_id: "",
+  instance_id: "",
+  region: "",
+  instance_type: "",
+  image_id: "",
+  subnet_id: "",
+  name: "",
+  status: "",
+  tags: {},
+  metadata: {},
+  created_at: "",
+  updated_at: "",
+};
 
 // ---------------------------------------------------------------------------
 // Workspace dashboard schemas
@@ -216,13 +257,14 @@ export const OnboardingNoRuntimeBootstrapResponseSchema = z.object({
 // The dashboard hits three independent rollup endpoints. Each returns a flat
 // array, and every field is consumed by chart / KPI math — a missing number
 // silently degrades to NaN downstream, so we coerce missing numbers to 0.
-// String fields stay lenient (no enum narrowing) to survive future model /
-// agent ID drift.
+// String fields default to "" (no enum narrowing) to survive future model /
+// agent ID drift, and so a single null from tz-aware SQL bucketing fails
+// only that row instead of dropping the whole array to the `[]` fallback.
 // ---------------------------------------------------------------------------
 
 const DashboardUsageDailySchema = z.object({
-  date: z.string(),
-  model: z.string(),
+  date: z.string().default(""),
+  model: z.string().default(""),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
   cache_read_tokens: z.number().default(0),
@@ -233,8 +275,8 @@ const DashboardUsageDailySchema = z.object({
 export const DashboardUsageDailyListSchema = z.array(DashboardUsageDailySchema);
 
 const DashboardUsageByAgentSchema = z.object({
-  agent_id: z.string(),
-  model: z.string(),
+  agent_id: z.string().default(""),
+  model: z.string().default(""),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
   cache_read_tokens: z.number().default(0),
@@ -245,7 +287,7 @@ const DashboardUsageByAgentSchema = z.object({
 export const DashboardUsageByAgentListSchema = z.array(DashboardUsageByAgentSchema);
 
 const DashboardAgentRunTimeSchema = z.object({
-  agent_id: z.string(),
+  agent_id: z.string().default(""),
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
   failed_count: z.number().default(0),
@@ -254,13 +296,64 @@ const DashboardAgentRunTimeSchema = z.object({
 export const DashboardAgentRunTimeListSchema = z.array(DashboardAgentRunTimeSchema);
 
 const DashboardRunTimeDailySchema = z.object({
-  date: z.string(),
+  date: z.string().default(""),
   total_seconds: z.number().default(0),
   task_count: z.number().default(0),
   failed_count: z.number().default(0),
 }).loose();
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
+
+// ---------------------------------------------------------------------------
+// Runtime usage schemas — the runtime-detail page's four usage endpoints
+// (`/api/runtimes/:id/usage*`). Same leniency rules as the dashboard
+// schemas above: numbers default to 0, strings to "", `.loose()` passes
+// unknown fields.
+// ---------------------------------------------------------------------------
+
+const RuntimeUsageSchema = z.object({
+  runtime_id: z.string().default(""),
+  date: z.string().default(""),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+}).loose();
+
+export const RuntimeUsageListSchema = z.array(RuntimeUsageSchema);
+
+const RuntimeHourlyActivitySchema = z.object({
+  hour: z.number().default(0),
+  count: z.number().default(0),
+}).loose();
+
+export const RuntimeHourlyActivityListSchema = z.array(RuntimeHourlyActivitySchema);
+
+const RuntimeUsageByAgentSchema = z.object({
+  agent_id: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+}).loose();
+
+export const RuntimeUsageByAgentListSchema = z.array(RuntimeUsageByAgentSchema);
+
+const RuntimeUsageByHourSchema = z.object({
+  hour: z.number().default(0),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+}).loose();
+
+export const RuntimeUsageByHourListSchema = z.array(RuntimeUsageByHourSchema);
 
 // ---------------------------------------------------------------------------
 // Agent template catalog — `/api/agent-templates*` and the
@@ -346,6 +439,51 @@ export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateR
   agent: { id: "" } as Agent,
   imported_skill_ids: [],
   reused_skill_ids: [],
+};
+
+// Squad list responses carry lightweight membership previews used by hover
+// cards. The preview fields are additive API fields, so older backends default
+// cleanly to no preview instead of breaking newer frontends.
+const SquadMemberPreviewSchema = z.object({
+  member_type: z.string(),
+  member_id: z.string(),
+  role: z.string().default(""),
+}).loose();
+
+export const SquadSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  instructions: z.string().default(""),
+  avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
+  leader_id: z.string(),
+  creator_id: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  archived_at: z.string().nullable().optional().transform((v) => v ?? null),
+  archived_by: z.string().nullable().optional().transform((v) => v ?? null),
+  member_count: z.number().default(0),
+  member_preview: z.array(SquadMemberPreviewSchema).default([]),
+}).loose();
+
+export const SquadListSchema = z.array(SquadSchema);
+export const EMPTY_SQUAD_LIST: Squad[] = [];
+export const EMPTY_SQUAD: Squad = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  description: "",
+  instructions: "",
+  avatar_url: null,
+  leader_id: "",
+  creator_id: "",
+  created_at: "",
+  updated_at: "",
+  archived_at: null,
+  archived_by: null,
+  member_count: 0,
+  member_preview: [],
 };
 
 // Squad member status — backs the Squad detail page's Members tab. status
@@ -506,6 +644,7 @@ export const UserSchema = z.object({
   starter_content_state: z.string().nullable().default(null),
   language: z.string().nullable().default(null),
   profile_description: z.string().default(""),
+  timezone: z.string().nullable().default(null),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();
@@ -520,6 +659,177 @@ export const EMPTY_USER: User = {
   starter_content_state: null,
   language: null,
   profile_description: "",
+  timezone: null,
   created_at: "",
   updated_at: "",
+};
+
+// ---------------------------------------------------------------------------
+// Billing schemas (cloud-billing proxy surface)
+//
+// All billing JSON we receive comes from multica-cloud verbatim — we proxy
+// the bytes without re-shaping. These schemas use `loose()` so a future
+// non-breaking field addition on the cloud side doesn't crash us; required
+// fields are still strictly enforced. EMPTY_* constants supply the
+// fallback parseWithFallback uses when the upstream response is malformed
+// or unparseable.
+
+export const BillingBalanceSchema = z.object({
+  owner_id: z.string(),
+  balance_micro: z.number(),
+  balance_credit: z.number(),
+  updated_at: z.string(),
+}).loose();
+
+export const EMPTY_BILLING_BALANCE: BillingBalance = {
+  owner_id: "",
+  balance_micro: 0,
+  balance_credit: 0,
+  updated_at: "",
+};
+
+// `tx_type` and `source` are kept as plain strings here; the cloud doc
+// enumerates the canonical values but the frontend display tolerates
+// unknown ones gracefully. Strict enums would crash the page on a future
+// addition (e.g. a new `topup` source kind).
+export const BillingTransactionSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  idempotency_key: z.string().default(""),
+  tx_type: z.string(),
+  source: z.string(),
+  amount_micro: z.number(),
+  balance_after: z.number(),
+  reference_id: z.string().default(""),
+  description: z.string().default(""),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string(),
+}).loose();
+
+export const BillingTransactionsPageSchema = z.object({
+  items: z.array(BillingTransactionSchema).default([]),
+  total: z.number().default(0),
+  page: z.number().default(1),
+  page_size: z.number().default(20),
+}).loose();
+
+export const EMPTY_BILLING_TRANSACTIONS_PAGE: BillingTransactionsPage = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: 20,
+};
+
+export const BillingBatchSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  source_tx_id: z.string().default(""),
+  source_type: z.string(),
+  total_micro: z.number(),
+  remaining_micro: z.number(),
+  // Cloud either omits the key (never expires) or sends a string
+  // timestamp. Null is also tolerated since some serializers emit
+  // explicit nulls for absent timestamps.
+  expires_at: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const BillingBatchesPageSchema = z.object({
+  items: z.array(BillingBatchSchema).default([]),
+  total: z.number().default(0),
+  page: z.number().default(1),
+  page_size: z.number().default(20),
+}).loose();
+
+export const EMPTY_BILLING_BATCHES_PAGE: BillingBatchesPage = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: 20,
+};
+
+export const BillingTopupSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  amount_cents: z.number(),
+  currency: z.string().default("usd"),
+  credits: z.number(),
+  bonus_credits: z.number().default(0),
+  status: z.string(),
+  tier_id: z.string().default(""),
+  stripe_checkout_id: z.string().default(""),
+  // Only set after status reaches `credited` — leave optional rather
+  // than coerce to "" so a UI can branch on existence.
+  purchase_batch_id: z.string().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const BillingTopupsPageSchema = z.object({
+  items: z.array(BillingTopupSchema).default([]),
+  total: z.number().default(0),
+  page: z.number().default(1),
+  page_size: z.number().default(20),
+}).loose();
+
+export const EMPTY_BILLING_TOPUPS_PAGE: BillingTopupsPage = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: 20,
+};
+
+export const BillingPriceTierSchema = z.object({
+  id: z.string(),
+  // Cloud doc says display_name falls back to id; tolerate empty too.
+  display_name: z.string().default(""),
+  amount_cents: z.number(),
+  credits: z.number(),
+  bonus_credits: z.number().optional(),
+  bonus_expires_in: z.string().optional(),
+}).loose();
+
+export const BillingPriceTierListSchema = z.array(BillingPriceTierSchema);
+
+export const EMPTY_BILLING_PRICE_TIER_LIST: BillingPriceTier[] = [];
+
+export const CreateBillingCheckoutSessionResponseSchema = z.object({
+  order_id: z.string(),
+  session_id: z.string(),
+  url: z.string(),
+}).loose();
+
+export const EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE: CreateBillingCheckoutSessionResponse = {
+  order_id: "",
+  session_id: "",
+  url: "",
+};
+
+export const BillingCheckoutSessionStatusSchema = z.object({
+  order_id: z.string(),
+  status: z.string(),
+  amount_cents: z.number(),
+  credits: z.number(),
+  bonus_credits: z.number().default(0),
+  currency: z.string().default("usd"),
+  tier_id: z.string().default(""),
+}).loose();
+
+export const EMPTY_BILLING_CHECKOUT_SESSION_STATUS: BillingCheckoutSessionStatus = {
+  order_id: "",
+  status: "pending",
+  amount_cents: 0,
+  credits: 0,
+  bonus_credits: 0,
+  currency: "usd",
+  tier_id: "",
+};
+
+export const CreateBillingPortalSessionResponseSchema = z.object({
+  url: z.string(),
+}).loose();
+
+export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSessionResponse = {
+  url: "",
 };
